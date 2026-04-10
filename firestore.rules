@@ -1,0 +1,147 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // 공용 계정 — 반드시 Firebase Console에서만 생성·비밀번호 관리 (클라이언트에 비밀번호 두지 않기)
+    function isSharedNeoRabbit() {
+      return signedIn()
+        && request.auth.token.email == 'neorabbit@neo-rabbit.app';
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        isSharedNeoRabbit()
+        || (request.auth.token.email != null
+          && request.auth.token.email.matches('(?i)^.+@unsat\\.co\\.kr$'))
+        || (exists(/databases/$(database)/documents/profiles/$(request.auth.uid))
+          && get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function profileData() {
+      return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data;
+    }
+
+    function hasRepProfile() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/profiles/$(request.auth.uid))
+        && profileData().role == 'rep'
+        && profileData().repId is string;
+    }
+
+    function userRepId() {
+      return profileData().repId;
+    }
+
+    function repIdWellFormed(rid) {
+      return rid is string && rid.size() > 0 && rid.size() <= 128;
+    }
+
+    function repDocumentExists(rid) {
+      return exists(/databases/$(database)/documents/reps/$(rid));
+    }
+
+    function validProfileWrite() {
+      return request.resource.data.role is string
+        && (request.resource.data.role == 'admin' || request.resource.data.role == 'rep')
+        && (request.resource.data.role != 'rep'
+            || (request.resource.data.repId is string
+                && request.resource.data.repId.size() > 0
+                && request.resource.data.repId.size() <= 128));
+    }
+
+    function validRepWriteData() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name', 'region', 'phone', 'joinDate', 'status'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 200
+        && d.region is string && d.region.size() <= 100
+        && d.phone is string && d.phone.size() <= 50
+        && d.joinDate is string && d.joinDate.size() <= 32
+        && d.status is string && d.status.size() <= 32;
+    }
+
+    function validStoreWriteData() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['repId', 'name', 'type', 'address', 'note', 'date', 'activated'])
+        && repIdWellFormed(d.repId)
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 200
+        && d.type is string && d.type.size() > 0 && d.type.size() <= 80
+        && d.date is string && d.date.size() <= 32
+        && d.activated is bool
+        && (!d.keys().hasAny(['address']) || (d.address is string && d.address.size() <= 500))
+        && (!d.keys().hasAny(['note']) || (d.note is string && d.note.size() <= 2000));
+    }
+
+    function validVisitWriteData() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['repId', 'name', 'address', 'date', 'result', 'note'])
+        && repIdWellFormed(d.repId)
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 200
+        && d.result is string && d.result.size() > 0 && d.result.size() <= 120
+        && d.date is string && d.date.size() <= 32
+        && (!d.keys().hasAny(['address']) || (d.address is string && d.address.size() <= 500))
+        && (!d.keys().hasAny(['note']) || (d.note is string && d.note.size() <= 2000));
+    }
+
+    function storeRepIdUnchanged() {
+      return request.resource.data.repId == resource.data.repId;
+    }
+
+    function visitRepIdUnchanged() {
+      return request.resource.data.repId == resource.data.repId;
+    }
+
+    match /profiles/{userId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update: if isAdmin() && validProfileWrite();
+      allow delete: if isAdmin();
+    }
+
+    // 다른 settings 문서는 열어두지 않음
+    match /settings/app {
+      allow read, write: if isAdmin();
+    }
+
+    match /reps/{repId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() && validRepWriteData();
+      allow delete: if isAdmin();
+    }
+
+    match /stores/{storeId} {
+      allow read: if isAdmin() || (hasRepProfile() && resource.data.repId == userRepId());
+      allow create: if validStoreWriteData()
+        && repDocumentExists(request.resource.data.repId)
+        && (isAdmin()
+            || (hasRepProfile() && request.resource.data.repId == userRepId()));
+      allow update: if validStoreWriteData()
+        && repDocumentExists(request.resource.data.repId)
+        && (isAdmin()
+            || (hasRepProfile()
+                && resource.data.repId == userRepId()
+                && storeRepIdUnchanged()));
+      allow delete: if isAdmin()
+        || (hasRepProfile() && resource.data.repId == userRepId());
+    }
+
+    match /visits/{visitId} {
+      allow read: if isAdmin() || (hasRepProfile() && resource.data.repId == userRepId());
+      allow create: if validVisitWriteData()
+        && repDocumentExists(request.resource.data.repId)
+        && (isAdmin()
+            || (hasRepProfile() && request.resource.data.repId == userRepId()));
+      allow update: if validVisitWriteData()
+        && repDocumentExists(request.resource.data.repId)
+        && (isAdmin()
+            || (hasRepProfile()
+                && resource.data.repId == userRepId()
+                && visitRepIdUnchanged()));
+      allow delete: if isAdmin()
+        || (hasRepProfile() && resource.data.repId == userRepId());
+    }
+  }
+}

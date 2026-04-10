@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>네오래빗 - 영업사원 어드민</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F8FAFB; max-width: 480px; margin: 0 auto; min-height: 100vh; }
+button { font-family: inherit; }
+input, select, textarea { font-family: inherit; }
+/* 웹에서는 OS·하드웨어 캡처를 완전히 막을 수 없음. 복사·우클릭·일부 단축키·인쇄 시 내용 숨김으로 완화 */
+.neo-capture-guard {
+  min-height: 100vh;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.neo-capture-guard input,
+.neo-capture-guard textarea,
+.neo-capture-guard select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+@media print {
+  .neo-capture-guard, .neo-capture-guard * { visibility: hidden !important; }
+  body::after { content: ""; display: block; }
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const STORE_TYPES = ["카페", "음식점", "미용실", "뷰티", "세탁소", "헬스장", "편의점", "기타"];
+
+const SHARED_LOGIN_ID = "neorabbit";
+const SHARED_AUTH_EMAIL = "neorabbit@neo-rabbit.app";
+const SHARED_DEFAULT_REP_ID = "1";
+
+function loginIdToAuthEmail(raw) {
+  const s = (raw || "").trim();
+  if (!s) return s;
+  if (s.indexOf("@") >= 0) return s;
+  if (s.toLowerCase() === SHARED_LOGIN_ID) return SHARED_AUTH_EMAIL;
+  return s;
+}
+
+function isSharedNeoRabbitUser(user) {
+  return !!(user && user.email && user.email.toLowerCase() === SHARED_AUTH_EMAIL.toLowerCase());
+}
+
+function mapAuthError(e) {
+  const c = e && e.code;
+  if (c === "auth/email-already-in-use") return "이미 가입된 이메일입니다.";
+  if (c === "auth/invalid-email") return "이메일 형식을 확인해 주세요.";
+  if (c === "auth/weak-password") return "비밀번호는 6자 이상으로 설정해 주세요.";
+  if (c === "auth/user-not-found") return "가입된 계정이 없습니다.";
+  if (c === "auth/wrong-password" || c === "auth/invalid-credential") return "이메일 또는 비밀번호를 확인해 주세요.";
+  if (c === "auth/too-many-requests") return "시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+  if (c === "auth/network-request-failed") return "네트워크를 확인해 주세요.";
+  return (e && e.message) || String(e);
+}
+
+function ScreenshotGuard({ children }) {
+  useEffect(() => {
+    const blockMenu = e => { e.preventDefault(); };
+    document.addEventListener("contextmenu", blockMenu);
+    const blockKeys = e => {
+      if (e.key === "PrintScreen") {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      if (e.metaKey && e.shiftKey && (e.key === "3" || e.key === "4" || e.key === "5")) {
+        e.preventDefault();
+      }
+      if (e.ctrlKey && e.shiftKey && (e.key === "S" || e.key === "s")) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", blockKeys, true);
+    return () => {
+      document.removeEventListener("contextmenu", blockMenu);
+      window.removeEventListener("keydown", blockKeys, true);
+    };
+  }, []);
+  return <div className="neo-capture-guard">{children}</div>;
+}
+
+function Badge({ children, color }) {
+  const colors = {
+    green: { bg: "#ECFDF5", text: "#059669", border: "#A7F3D0" },
+    yellow: { bg: "#FFF7ED", text: "#D97706", border: "#FED7AA" },
+    blue: { bg: "#EFF6FF", text: "#2563EB", border: "#BFDBFE" },
+    red: { bg: "#FEF2F2", text: "#DC2626", border: "#FECACA" },
+    gray: { bg: "#F3F4F6", text: "#6B7280", border: "#E5E7EB" },
+  };
+  const c = colors[color] || colors.gray;
+  return <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: c.bg, color: c.text, border: "1px solid " + c.border }}>{children}</span>;
+}
+
+function Modal({ open, onClose, title, children }) {
+  if (!open) return null;
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px 32px", width: "100%", maxWidth: 480,
+        maxHeight: "85vh", overflowY: "auto", boxShadow: "0 -10px 40px rgba(0,0,0,0.12)",
+      }}>
+        <div style={{ width: 36, height: 4, borderRadius: 2, background: "#D1D5DB", margin: "0 auto 16px" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>{title}</h3>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "#F3F4F6", cursor: "pointer", fontSize: 15, color: "#6B7280" }}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Input({ label, value, onChange, placeholder, type, multiline }) {
+  const style = { width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 14, outline: "none", background: "#FAFAFA", boxSizing: "border-box", resize: "none" };
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>{label}</label>
+      {multiline ? (
+        <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={3} style={style}
+          onFocus={e => e.target.style.borderColor = "#028090"} onBlur={e => e.target.style.borderColor = "#E5E7EB"} />
+      ) : (
+        <input type={type || "text"} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={style}
+          onFocus={e => e.target.style.borderColor = "#028090"} onBlur={e => e.target.style.borderColor = "#E5E7EB"} />
+      )}
+    </div>
+  );
+}
+
+function Select({ label, value, onChange, options }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>{label}</label>
+      <select value={value} onChange={e => onChange(e.target.value)} style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 14, outline: "none", background: "#FAFAFA", boxSizing: "border-box", cursor: "pointer" }}>
+        <option value="">선택</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function Btn({ children, onClick, disabled, color }) {
+  const bg = color === "gray" ? "#F3F4F6" : "linear-gradient(135deg, #028090, #00A896)";
+  const txt = color === "gray" ? "#374151" : "#fff";
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      padding: "12px 24px", borderRadius: 12, border: "none", cursor: disabled ? "not-allowed" : "pointer",
+      fontSize: 14, fontWeight: 700, width: "100%", background: disabled ? "#D1D5DB" : bg, color: txt, opacity: disabled ? 0.5 : 1,
+    }}>{children}</button>
+  );
+}
+
+function RepLoginGate() {
+  const [user, setUser] = useState(undefined);
+  const [profile, setProfile] = useState(undefined);
+  const [authErr, setAuthErr] = useState("");
+  const [configError, setConfigError] = useState("");
+  const [authMode, setAuthMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
+
+  useEffect(() => {
+    const cfg = window.__NEO_FIREBASE_CONFIG__;
+    if (!cfg || !cfg.apiKey || String(cfg.apiKey).indexOf("YOUR_") === 0) {
+      setConfigError("neo 폴더의 firebase-config.js에 Firebase 웹 앱 설정을 넣어주세요.");
+      setUser(null);
+      return undefined;
+    }
+    setConfigError("");
+    if (!firebase.apps.length) firebase.initializeApp(cfg);
+    if (typeof window.neoActivateAppCheckIfConfigured === "function") window.neoActivateAppCheckIfConfigured();
+    return firebase.auth().onAuthStateChanged(setUser);
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setProfile(undefined);
+      return undefined;
+    }
+    if (isSharedNeoRabbitUser(user)) {
+      return undefined;
+    }
+    setProfile(undefined);
+    const db = firebase.firestore();
+    const unsub = db.collection("profiles").doc(user.uid).onSnapshot(
+      snap => setProfile(snap.exists ? snap.data() : null),
+      err => {
+        console.error(err);
+        setProfile(null);
+      }
+    );
+    return () => unsub();
+  }, [user]);
+
+  const doLogin = async e => {
+    e.preventDefault();
+    setAuthErr("");
+    setInfoMsg("");
+    try {
+      await firebase.auth().signInWithEmailAndPassword(loginIdToAuthEmail(email), password);
+    } catch (err) {
+      setAuthErr(mapAuthError(err));
+    }
+  };
+
+  const doSignup = async e => {
+    e.preventDefault();
+    setAuthErr("");
+    setInfoMsg("");
+    const authEmail = loginIdToAuthEmail(email);
+    if (authEmail === SHARED_AUTH_EMAIL) {
+      setAuthErr("공용 아이디 " + SHARED_LOGIN_ID + " 는 회원가입 없이 로그인만 사용하세요.");
+      return;
+    }
+    if (password.length < 6) {
+      setAuthErr("비밀번호는 6자 이상이어야 합니다.");
+      return;
+    }
+    if (password !== password2) {
+      setAuthErr("비밀번호가 서로 일치하지 않습니다.");
+      return;
+    }
+    try {
+      await firebase.auth().createUserWithEmailAndPassword(authEmail, password);
+    } catch (err) {
+      setAuthErr(mapAuthError(err));
+    }
+  };
+
+  const doResetPassword = async e => {
+    e.preventDefault();
+    setAuthErr("");
+    setInfoMsg("");
+    const em = loginIdToAuthEmail(email).trim();
+    if (!em) {
+      setAuthErr("아이디 또는 이메일을 입력해 주세요.");
+      return;
+    }
+    try {
+      await firebase.auth().sendPasswordResetEmail(em);
+      setInfoMsg("비밀번호 재설정 링크를 메일로 보냈습니다. 받은편지함(스팸함 포함)을 확인해 주세요.");
+    } catch (err) {
+      setAuthErr(mapAuthError(err));
+    }
+  };
+
+  const inStyle = { width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 14, boxSizing: "border-box", background: "#FAFAFA" };
+  const lb = { display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 6 };
+  const linkBtn = { background: "none", border: "none", cursor: "pointer", color: "#028090", fontSize: 13, fontWeight: 600, textDecoration: "underline", padding: 0 };
+
+  if (configError) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ color: "#DC2626", textAlign: "center", maxWidth: 400, lineHeight: 1.6, fontSize: 14 }}>{configError}</div>
+      </div>
+    );
+  }
+  if (user === undefined) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 14, color: "#6B7280" }}>로그인 확인 중…</div>
+      </div>
+    );
+  }
+  if (!user) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ width: "100%", maxWidth: 400, background: "#fff", borderRadius: 20, padding: "28px 22px", boxShadow: "0 4px 24px rgba(0,0,0,0.08)", margin: "0 auto" }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#1A1A2E", marginBottom: 4 }}>네오래빗</div>
+          <div style={{ fontSize: 12, color: "#028090", fontWeight: 700, marginBottom: 10 }}>영업사원 어드민</div>
+          <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 18, lineHeight: 1.5 }}>
+            {authMode === "login" && ("공용: 아이디 " + SHARED_LOGIN_ID + " (rep " + SHARED_DEFAULT_REP_ID + "). 비밀번호는 관리자가 안내한 값. 그 외는 이메일 + 프로필 등록.")}
+            {authMode === "signup" && "회원가입 후 관리자에게 프로필 등록을 요청하세요."}
+            {authMode === "forgotId" && "로그인 아이디 안내"}
+            {authMode === "forgotPw" && "이메일로 재설정 링크를 보냅니다."}
+          </p>
+
+          {authMode === "forgotId" && (
+            <div style={{ marginBottom: 16 }}>
+              <p style={{ fontSize: 14, color: "#374151", lineHeight: 1.7 }}>공용 아이디는 <b>{SHARED_LOGIN_ID}</b> 입니다. 그 외는 가입 시 <b>이메일</b>이 아이디입니다.</p>
+              <button type="button" style={{ ...linkBtn, marginTop: 14 }} onClick={() => { setAuthMode("login"); setAuthErr(""); setInfoMsg(""); }}>로그인으로 돌아가기</button>
+            </div>
+          )}
+
+          {(authMode === "login" || authMode === "signup" || authMode === "forgotPw") && (
+            <form onSubmit={authMode === "login" ? doLogin : authMode === "signup" ? doSignup : doResetPassword}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={lb}>아이디 또는 이메일</label>
+                <input type="text" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} style={inStyle} placeholder={SHARED_LOGIN_ID + " 또는 email@example.com"} required />
+              </div>
+              {authMode !== "forgotPw" && (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={lb}>비밀번호</label>
+                  <input type="password" autoComplete={authMode === "signup" ? "new-password" : "current-password"} value={password} onChange={e => setPassword(e.target.value)} style={inStyle} placeholder="6자 이상" required />
+                </div>
+              )}
+              {authMode === "signup" && (
+                <div style={{ marginBottom: 16 }}>
+                  <label style={lb}>비밀번호 확인</label>
+                  <input type="password" autoComplete="new-password" value={password2} onChange={e => setPassword2(e.target.value)} style={inStyle} placeholder="다시 입력" required />
+                </div>
+              )}
+              {authErr ? <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 10 }}>{authErr}</div> : null}
+              {infoMsg ? <div style={{ color: "#059669", fontSize: 12, marginBottom: 10, lineHeight: 1.5 }}>{infoMsg}</div> : null}
+              <button type="submit" style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14, background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff", marginBottom: 12 }}>
+                {authMode === "login" ? "로그인" : authMode === "signup" ? "회원가입" : "재설정 메일 보내기"}
+              </button>
+            </form>
+          )}
+
+          {authMode === "login" && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 14px", justifyContent: "center" }}>
+              <button type="button" style={linkBtn} onClick={() => { setAuthMode("signup"); setAuthErr(""); setInfoMsg(""); }}>회원가입</button>
+              <button type="button" style={linkBtn} onClick={() => { setAuthMode("forgotId"); setAuthErr(""); setInfoMsg(""); }}>아이디 찾기</button>
+              <button type="button" style={linkBtn} onClick={() => { setAuthMode("forgotPw"); setAuthErr(""); setInfoMsg(""); }}>비밀번호 찾기</button>
+            </div>
+          )}
+          {authMode === "signup" && (
+            <button type="button" style={{ ...linkBtn, display: "block", margin: "0 auto" }} onClick={() => { setAuthMode("login"); setAuthErr(""); setInfoMsg(""); }}>이미 계정이 있어요</button>
+          )}
+          {authMode === "forgotPw" && (
+            <button type="button" style={{ ...linkBtn, display: "block", margin: "10px auto 0" }} onClick={() => { setAuthMode("login"); setAuthErr(""); setInfoMsg(""); }}>로그인으로 돌아가기</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+  if (isSharedNeoRabbitUser(user)) {
+    return (
+      <ScreenshotGuard>
+        <App repId={SHARED_DEFAULT_REP_ID} onSignOut={() => firebase.auth().signOut()} />
+      </ScreenshotGuard>
+    );
+  }
+  if (profile === undefined) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ fontSize: 14, color: "#6B7280" }}>프로필 확인 중…</div>
+      </div>
+    );
+  }
+  if (profile === null || profile.role !== "rep" || profile.repId == null || String(profile.repId).trim() === "") {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", padding: "24px 20px", maxWidth: 480, margin: "0 auto" }}>
+        <div style={{ fontSize: 17, fontWeight: 800, color: "#1A1A2E", marginBottom: 12 }}>등록이 필요합니다</div>
+        <p style={{ fontSize: 13, color: "#6B7280", lineHeight: 1.6, marginBottom: 16 }}>관리자에게 아래 <b>사용자 ID</b>를 전달하세요. Firestore <b>profiles</b> 컬렉션에 문서 ID를 이 값으로 만들고 필드를 추가해야 합니다.</p>
+        <div style={{ background: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, border: "1px solid #E5E7EB", wordBreak: "break-all", fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{user.uid}</div>
+        <p style={{ fontSize: 12, color: "#374151", lineHeight: 1.6, marginBottom: 16 }}>필드 예: <b>role</b> <code>rep</code>, <b>repId</b> <code>1</code> (관리자 화면 「담당 ID」와 동일, 문자열로 입력)</p>
+        <button type="button" onClick={() => firebase.auth().signOut()} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid #E5E7EB", cursor: "pointer", background: "#fff", fontWeight: 600 }}>로그아웃</button>
+      </div>
+    );
+  }
+  return (
+    <ScreenshotGuard>
+      <App repId={String(profile.repId)} onSignOut={() => firebase.auth().signOut()} />
+    </ScreenshotGuard>
+  );
+}
+
+function App({ repId, onSignOut }) {
+  const [tab, setTab] = useState("home");
+  const [stores, setStores] = useState([]);
+  const [visits, setVisits] = useState([]);
+  const [loadState, setLoadState] = useState({ loading: true, error: "" });
+  const [showAddStore, setShowAddStore] = useState(false);
+  const [showAddVisit, setShowAddVisit] = useState(false);
+  const [showDetail, setShowDetail] = useState(null);
+  const [storeFilter, setStoreFilter] = useState("all");
+
+  const [newStore, setNewStore] = useState({ name: "", type: "", address: "", note: "" });
+  const [newVisit, setNewVisit] = useState({ name: "", address: "", result: "", note: "" });
+
+  useEffect(() => {
+    const cfg = window.__NEO_FIREBASE_CONFIG__;
+    if (!cfg || !cfg.apiKey || String(cfg.apiKey).indexOf("YOUR_") === 0) {
+      setLoadState({ loading: false, error: "neo 폴더의 firebase-config.js에 Firebase 웹 앱 설정을 넣어주세요." });
+      return;
+    }
+    let unsubStores, unsubVisits;
+    (async () => {
+      try {
+        if (!firebase.apps.length) firebase.initializeApp(cfg);
+        if (typeof window.neoActivateAppCheckIfConfigured === "function") window.neoActivateAppCheckIfConfigured();
+        const db = firebase.firestore();
+        unsubStores = db.collection("stores").where("repId", "==", repId).onSnapshot(snap => {
+          setStores(snap.docs.map(d => {
+            const x = d.data();
+            return {
+              id: d.id,
+              name: x.name,
+              type: x.type,
+              address: x.address || "",
+              date: x.date,
+              note: x.note || "",
+              status: x.activated ? "activated" : "pending",
+            };
+          }));
+        }, err => console.error(err));
+        unsubVisits = db.collection("visits").where("repId", "==", repId).onSnapshot(snap => {
+          const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          rows.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+          setVisits(rows);
+        }, err => console.error(err));
+        setLoadState({ loading: false, error: "" });
+      } catch (e) {
+        console.error(e);
+        setLoadState({ loading: false, error: (e && e.message) || String(e) });
+      }
+    })();
+    return () => {
+      if (unsubStores) unsubStores();
+      if (unsubVisits) unsubVisits();
+    };
+  }, [repId]);
+
+  useEffect(() => {
+    setShowDetail(prev => {
+      if (!prev) return prev;
+      const next = stores.find(s => String(s.id) === String(prev.id));
+      return next !== undefined ? next : prev;
+    });
+  }, [stores]);
+
+  const activated = stores.filter(s => s.status === "activated").length;
+  const pending = stores.filter(s => s.status === "pending").length;
+  const totalIncentive = stores.length * 20000 + activated * 10000;
+  const todayVisits = visits.filter(v => v.date === new Date().toISOString().slice(0, 10)).length;
+
+  const filteredStores = storeFilter === "all" ? stores : stores.filter(s => s.status === storeFilter);
+
+  const handleAddStore = async () => {
+    if (!newStore.name || !newStore.type) return;
+    try {
+      const db = firebase.firestore();
+      await db.collection("stores").add({
+        repId,
+        name: newStore.name,
+        type: newStore.type,
+        address: newStore.address || "",
+        note: newStore.note || "",
+        date: new Date().toISOString().slice(0, 10),
+        activated: false,
+      });
+      setNewStore({ name: "", type: "", address: "", note: "" });
+      setShowAddStore(false);
+    } catch (e) {
+      alert("저장 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const handleAddVisit = async () => {
+    if (!newVisit.name || !newVisit.result) return;
+    try {
+      const db = firebase.firestore();
+      await db.collection("visits").add({
+        repId,
+        name: newVisit.name,
+        address: newVisit.address || "",
+        date: new Date().toISOString().slice(0, 10),
+        result: newVisit.result,
+        note: newVisit.note || "",
+      });
+      setNewVisit({ name: "", address: "", result: "", note: "" });
+      setShowAddVisit(false);
+    } catch (e) {
+      alert("저장 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const handleToggleStatus = async (id) => {
+    const s = stores.find(x => String(x.id) === String(id));
+    if (!s) return;
+    const nextActivated = s.status !== "activated";
+    try {
+      const db = firebase.firestore();
+      await db.collection("stores").doc(String(id)).update({ activated: nextActivated });
+    } catch (e) {
+      alert("상태 변경 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  if (loadState.loading) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 14, color: "#6B7280" }}>연결 중…</div>
+      </div>
+    );
+  }
+  if (loadState.error) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ color: "#DC2626", textAlign: "center", maxWidth: 400, lineHeight: 1.6, fontSize: 14 }}>{loadState.error}</div>
+      </div>
+    );
+  }
+
+  const tabs = [
+    { id: "home", icon: "🏠", label: "홈" },
+    { id: "stores", icon: "🏪", label: "내 업체" },
+    { id: "visits", icon: "📋", label: "방문 기록" },
+    { id: "guide", icon: "📖", label: "가이드" },
+  ];
+
+  return (
+    <div style={{ minHeight: "100vh", paddingBottom: 70, background: "#F8FAFB" }}>
+
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg, #028090, #00A896)", padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 20 }}>🐰</span>
+          <div>
+            <div style={{ color: "#fff", fontSize: 15, fontWeight: 800 }}>네오래빗</div>
+            <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 10 }}>영업사원 어드민</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 10, fontWeight: 600 }}>담당 {repId}</div>
+          <button type="button" onClick={onSignOut} style={{
+            padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.35)", background: "rgba(0,0,0,0.1)",
+            color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
+          }}>나가기</button>
+          <div style={{ color: "#fff", fontSize: 12, opacity: 0.7 }}>{new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" })}</div>
+        </div>
+      </div>
+
+      {/* ===== HOME ===== */}
+      {tab === "home" && (
+        <div style={{ padding: "20px 16px" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E", marginBottom: 4 }}>안녕하세요! 👋</div>
+          <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 20 }}>오늘도 화이팅!</div>
+
+          {/* Stats Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+            {[
+              { label: "총 입점", value: stores.length + "곳", icon: "🏪", color: "#1A1A2E" },
+              { label: "활성화", value: activated + "곳", icon: "✅", color: "#028090" },
+              { label: "미활성화", value: pending + "곳", icon: "⏳", color: "#D97706" },
+              { label: "누적 인센티브", value: (totalIncentive / 10000).toFixed(0) + "만원", icon: "💰", color: "#F59E0B" },
+            ].map((s, i) => (
+              <div key={i} style={{ background: "#fff", borderRadius: 14, padding: "16px 14px", boxShadow: "0 1px 4px rgba(0,0,0,0.05)", position: "relative", overflow: "hidden" }}>
+                <div style={{ position: "absolute", top: 10, right: 12, fontSize: 20, opacity: 0.1 }}>{s.icon}</div>
+                <div style={{ fontSize: 11, color: "#9CA3AF", marginBottom: 3 }}>{s.label}</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: s.color, letterSpacing: -0.5 }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Quick Actions */}
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E", marginBottom: 10 }}>빠른 실행</div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
+            <button onClick={() => setShowAddStore(true)} style={{
+              flex: 1, padding: "14px 12px", borderRadius: 14, border: "none", cursor: "pointer",
+              background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff", fontSize: 13, fontWeight: 700,
+            }}>+ 업체 입점 등록</button>
+            <button onClick={() => setShowAddVisit(true)} style={{
+              flex: 1, padding: "14px 12px", borderRadius: 14, border: "1.5px solid #028090", cursor: "pointer",
+              background: "#fff", color: "#028090", fontSize: 13, fontWeight: 700,
+            }}>+ 방문 기록</button>
+          </div>
+
+          {/* Today Summary */}
+          <div style={{ background: "#fff", borderRadius: 14, padding: 18, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E", marginBottom: 12 }}>오늘 활동</div>
+            <div style={{ display: "flex", justifyContent: "space-around" }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: "#028090" }}>{todayVisits}</div>
+                <div style={{ fontSize: 11, color: "#9CA3AF" }}>방문</div>
+              </div>
+              <div style={{ width: 1, background: "#E5E7EB" }} />
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: "#059669" }}>{visits.filter(v => v.date === new Date().toISOString().slice(0, 10) && v.result === "success").length}</div>
+                <div style={{ fontSize: 11, color: "#9CA3AF" }}>입점 성공</div>
+              </div>
+              <div style={{ width: 1, background: "#E5E7EB" }} />
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: "#D97706" }}>{visits.filter(v => v.date === new Date().toISOString().slice(0, 10) && v.result === "retry").length}</div>
+                <div style={{ fontSize: 11, color: "#9CA3AF" }}>재방문</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== STORES ===== */}
+      {tab === "stores" && !showDetail && (
+        <div style={{ padding: "20px 16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>내 입점 업체</div>
+            <button onClick={() => setShowAddStore(true)} style={{
+              padding: "8px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+              background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff",
+            }}>+ 등록</button>
+          </div>
+
+          {/* Filter */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+            {[["all", "전체 " + stores.length], ["activated", "활성화 " + activated], ["pending", "미활성화 " + pending]].map(([k, l]) => (
+              <button key={k} onClick={() => setStoreFilter(k)} style={{
+                padding: "6px 14px", borderRadius: 8, border: "1px solid #E5E7EB", cursor: "pointer", fontSize: 12, fontWeight: 600,
+                background: storeFilter === k ? "#028090" : "#fff", color: storeFilter === k ? "#fff" : "#6B7280",
+                borderColor: storeFilter === k ? "#028090" : "#E5E7EB",
+              }}>{l}</button>
+            ))}
+          </div>
+
+          {/* Store List */}
+          {filteredStores.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF" }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>🏪</div>
+              <div style={{ fontSize: 14 }}>등록된 업체가 없습니다</div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {filteredStores.map(s => (
+                <div key={s.id} onClick={() => setShowDetail(s)} style={{
+                  background: "#fff", borderRadius: 14, padding: "14px 16px", cursor: "pointer",
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.05)", borderLeft: "4px solid " + (s.status === "activated" ? "#028090" : "#F59E0B"),
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E" }}>{s.name}</div>
+                    <Badge color={s.status === "activated" ? "green" : "yellow"}>{s.status === "activated" ? "활성화" : "미활성화"}</Badge>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#9CA3AF" }}>{s.type} · {s.date}</div>
+                  {s.address && <div style={{ fontSize: 11, color: "#B0B7C3", marginTop: 2 }}>{s.address}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Store Detail */}
+      {tab === "stores" && showDetail && (
+        <div style={{ padding: "20px 16px" }}>
+          <button onClick={() => setShowDetail(null)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 14 }}>← 목록으로</button>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E", marginBottom: 4 }}>{showDetail.name}</div>
+                <div style={{ fontSize: 12, color: "#9CA3AF" }}>{showDetail.type} · 입점일 {showDetail.date}</div>
+              </div>
+              <Badge color={showDetail.status === "activated" ? "green" : "yellow"}>{showDetail.status === "activated" ? "활성화" : "미활성화"}</Badge>
+            </div>
+
+            {showDetail.address && (
+              <div style={{ background: "#F8FAFB", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "#9CA3AF", marginBottom: 2 }}>주소</div>
+                <div style={{ fontSize: 13, color: "#374151" }}>{showDetail.address}</div>
+              </div>
+            )}
+
+            {showDetail.note && (
+              <div style={{ background: "#FFF7ED", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "#D97706", marginBottom: 2 }}>메모</div>
+                <div style={{ fontSize: 13, color: "#92400E" }}>{showDetail.note}</div>
+              </div>
+            )}
+
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E", marginBottom: 8, marginTop: 16 }}>인센티브</div>
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1, background: "#E6FFFA", borderRadius: 10, padding: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: "#028090" }}>입점</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#028090" }}>20,000원</div>
+              </div>
+              <div style={{ flex: 1, background: showDetail.status === "activated" ? "#ECFDF5" : "#F3F4F6", borderRadius: 10, padding: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: showDetail.status === "activated" ? "#059669" : "#9CA3AF" }}>활성화</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: showDetail.status === "activated" ? "#059669" : "#D1D5DB" }}>{showDetail.status === "activated" ? "+10,000원" : "미완료"}</div>
+              </div>
+            </div>
+
+            <button onClick={() => handleToggleStatus(showDetail.id)} style={{
+              width: "100%", padding: "12px", borderRadius: 12, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
+              background: showDetail.status === "activated" ? "#FEF2F2" : "linear-gradient(135deg, #028090, #00A896)",
+              color: showDetail.status === "activated" ? "#DC2626" : "#fff",
+            }}>{showDetail.status === "activated" ? "미활성화로 변경" : "활성화 완료 처리"}</button>
+
+            {showDetail.status === "pending" && (
+              <div style={{ marginTop: 16, background: "#F8FAFB", borderRadius: 12, padding: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E", marginBottom: 8 }}>활성화 체크리스트</div>
+                {["쿠폰 10개 혜택 작성", "당근(리워드) 혜택 + 최소금액 설정", "상세페이지 업로드 (사진, 메뉴, 영업시간)"].map((item, i) => (
+                  <div key={i} style={{ fontSize: 12, color: "#6B7280", padding: "6px 0", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ width: 18, height: 18, borderRadius: 4, border: "1.5px solid #D1D5DB", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, flexShrink: 0 }}>☐</span>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ===== VISITS ===== */}
+      {tab === "visits" && (
+        <div style={{ padding: "20px 16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>방문 기록</div>
+            <button onClick={() => setShowAddVisit(true)} style={{
+              padding: "8px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+              background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff",
+            }}>+ 기록</button>
+          </div>
+
+          {visits.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF" }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>📋</div>
+              <div style={{ fontSize: 14 }}>방문 기록이 없습니다</div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {visits.map(v => {
+                const rc = { success: { color: "green", label: "입점 성공", icon: "✅" }, retry: { color: "yellow", label: "재방문 필요", icon: "🔄" }, fail: { color: "red", label: "거절", icon: "❌" } };
+                const r = rc[v.result] || rc.fail;
+                return (
+                  <div key={v.id} style={{ background: "#fff", borderRadius: 14, padding: "14px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E" }}>{r.icon} {v.name}</div>
+                      <Badge color={r.color}>{r.label}</Badge>
+                    </div>
+                    <div style={{ fontSize: 12, color: "#9CA3AF" }}>{v.date}</div>
+                    {v.address && <div style={{ fontSize: 11, color: "#B0B7C3", marginTop: 2 }}>{v.address}</div>}
+                    {v.note && <div style={{ fontSize: 12, color: "#6B7280", marginTop: 6, background: "#F8FAFB", borderRadius: 8, padding: "6px 10px" }}>{v.note}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===== GUIDE ===== */}
+      {tab === "guide" && (
+        <div style={{ padding: "20px 16px" }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E", marginBottom: 16 }}>영업 가이드</div>
+
+          {[
+            { title: "오프닝 (30초)", content: "\"안녕하세요 사장님, 저는 네오래빗이라는 동네 쿠폰·리워드 플랫폼에서 나왔습니다. 1분만 시간 주시면 사장님 매장에 도움 되는 이야기 드릴게요.\"", color: "#028090" },
+            { title: "핵심 제안 (1분)", content: "\"배달앱에 수수료를 많이 내고 계시잖아요. 저희는 입점비도 무료, 수수료도 0%입니다. 고객이 QR 찍으면 자동으로 쿠폰이 쌓이고, 10개 모이면 사장님이 정한 혜택을 주는 구조예요.\"", color: "#0891B2" },
+            { title: "클로징 (30초)", content: "\"지금 바로 앱 설치하시면 5분이면 입점 신청 끝나요. 사업자등록증만 사진 찍어 올려주시면 됩니다. 도움 필요하시면 제가 같이 해드릴게요.\"", color: "#059669" },
+          ].map((s, i) => (
+            <div key={i} style={{ background: "#fff", borderRadius: 14, padding: 16, marginBottom: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)", borderLeft: "4px solid " + s.color }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: s.color, marginBottom: 8 }}>{s.title}</div>
+              <div style={{ fontSize: 13, color: "#374151", lineHeight: 1.6, fontStyle: "italic" }}>{s.content}</div>
+            </div>
+          ))}
+
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1A1A2E", marginTop: 24, marginBottom: 12 }}>자주 받는 질문</div>
+          {[
+            { q: "\"돈 안 받으면 뭘로 돈 벌어요?\"", a: "지금은 무료로 업체를 모으는 단계이고, 나중에 월 구독료 형태로 소액만 받을 예정입니다. 매출 수수료는 영구 0%입니다." },
+            { q: "\"안 하면 불이익 있어요?\"", a: "전혀 없습니다. 해지도 자유예요. 부담 없이 시작해보세요." },
+            { q: "\"쿠폰 비용은 누가?\"", a: "사장님이 직접 설정하시는 거예요. 커피 1잔, 10% 할인 등 부담 없는 수준으로요." },
+            { q: "\"리워드 정산은?\"", a: "매주 금요일에 사용 금액을 사장님 계좌로 입금해 드립니다." },
+            { q: "\"바쁜데 나중에 할게요\"", a: "네, 명함 드릴게요. 앱 이름은 '네오래빗 업체용'입니다." },
+          ].map((faq, i) => (
+            <div key={i} style={{ background: "#fff", borderRadius: 14, padding: 14, marginBottom: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E", marginBottom: 6 }}>{faq.q}</div>
+              <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5 }}>{faq.a}</div>
+            </div>
+          ))}
+
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#1A1A2E", marginTop: 24, marginBottom: 12 }}>활성화 안내 멘트</div>
+          {[
+            { n: "1", title: "쿠폰 10개 혜택", msg: "\"쿠폰 10개 모은 손님에게 뭘 주실 건지 적어주세요. 예: 아메리카노 1잔 무료\"" },
+            { n: "2", title: "당근(리워드) 혜택", msg: "\"리워드로 줄 혜택이랑 최소 사용금액을 설정해주세요. 예: 1만원 이상 시 당근 3개로 음료 교환\"" },
+            { n: "3", title: "상세페이지", msg: "\"매장 사진, 메뉴 소개, 영업시간을 앱에서 올려주시면 고객들이 보고 방문합니다\"" },
+          ].map((item, i) => (
+            <div key={i} style={{ background: "#fff", borderRadius: 14, padding: 14, marginBottom: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.05)", display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: "#028090", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, flexShrink: 0 }}>{item.n}</div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E", marginBottom: 4 }}>{item.title}</div>
+                <div style={{ fontSize: 12, color: "#6B7280", fontStyle: "italic" }}>{item.msg}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Bottom Nav */}
+      <div style={{
+        position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480,
+        background: "#fff", borderTop: "1px solid #E5E7EB", display: "flex", justifyContent: "space-around",
+        padding: "8px 0 12px", zIndex: 100,
+      }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => { setTab(t.id); setShowDetail(null); }} style={{
+            background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 12px",
+          }}>
+            <span style={{ fontSize: 20, opacity: tab === t.id ? 1 : 0.4 }}>{t.icon}</span>
+            <span style={{ fontSize: 10, fontWeight: 600, color: tab === t.id ? "#028090" : "#9CA3AF" }}>{t.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Add Store Modal */}
+      <Modal open={showAddStore} onClose={() => setShowAddStore(false)} title="업체 입점 등록">
+        <Input label="업체명" value={newStore.name} onChange={v => setNewStore(p => ({ ...p, name: v }))} placeholder="카페 이름, 음식점 이름 등" />
+        <Select label="업종" value={newStore.type} onChange={v => setNewStore(p => ({ ...p, type: v }))} options={STORE_TYPES} />
+        <Input label="주소 (선택)" value={newStore.address} onChange={v => setNewStore(p => ({ ...p, address: v }))} placeholder="매장 주소" />
+        <Input label="메모 (선택)" value={newStore.note} onChange={v => setNewStore(p => ({ ...p, note: v }))} placeholder="특이사항, 사장님 반응 등" multiline />
+        <Btn onClick={handleAddStore} disabled={!newStore.name || !newStore.type}>입점 등록하기</Btn>
+      </Modal>
+
+      {/* Add Visit Modal */}
+      <Modal open={showAddVisit} onClose={() => setShowAddVisit(false)} title="방문 기록">
+        <Input label="업체명" value={newVisit.name} onChange={v => setNewVisit(p => ({ ...p, name: v }))} placeholder="방문한 매장 이름" />
+        <Input label="주소 (선택)" value={newVisit.address} onChange={v => setNewVisit(p => ({ ...p, address: v }))} placeholder="매장 주소" />
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>방문 결과</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[["success", "✅ 입점 성공", "#059669"], ["retry", "🔄 재방문", "#D97706"], ["fail", "❌ 거절", "#DC2626"]].map(([val, label, color]) => (
+              <button key={val} onClick={() => setNewVisit(p => ({ ...p, result: val }))} style={{
+                flex: 1, padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 600,
+                border: newVisit.result === val ? "2px solid " + color : "1.5px solid #E5E7EB",
+                background: newVisit.result === val ? color + "10" : "#fff", color: newVisit.result === val ? color : "#6B7280",
+              }}>{label}</button>
+            ))}
+          </div>
+        </div>
+        <Input label="메모 (선택)" value={newVisit.note} onChange={v => setNewVisit(p => ({ ...p, note: v }))} placeholder="사장님 반응, 특이사항 등" multiline />
+        <Btn onClick={handleAddVisit} disabled={!newVisit.name || !newVisit.result}>기록 저장</Btn>
+      </Modal>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<RepLoginGate />);
+</script>
+</body>
+</html>

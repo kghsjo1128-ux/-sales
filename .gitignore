@@ -1,0 +1,9 @@
+# 로컬 전용 — 저장소에 올리지 마세요
+firebase-config.js
+
+# Firebase CLI 캐시
+.firebase/
+
+node_modules/
+.DS_Store
+Thumbs.db

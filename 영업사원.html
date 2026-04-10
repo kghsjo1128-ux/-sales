@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NeoRabbit Admin - 영업사원 관리 시스템</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F8FAFB; }
+button { font-family: inherit; }
+input, select { font-family: inherit; }
+table { border-spacing: 0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef } = React;
+
+function sendNeoAdminNotification(title, body) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  try {
+    new Notification(title, { body, tag: "neo-admin-activity", requireInteraction: false });
+  } catch (e) { /* ignore */ }
+}
+
+// 공용 로그인 (Firebase는 이메일만 지원 → 내부 매핑). 규칙 firestore.rules 의 isSharedNeoRabbit 과 동일 이메일.
+// 계정·비밀번호는 Firebase Console에서만 관리 (클라이언트에 비밀번호 상수 금지).
+const SHARED_LOGIN_ID = "neorabbit";
+const SHARED_AUTH_EMAIL = "neorabbit@neo-rabbit.app";
+
+// Firestore 규칙 isAdmin() 과 동일 (회사 도메인 또는 profiles.role === "admin" 또는 공용 계정)
+const ADMIN_EMAIL_DOMAIN = "@unsat.co.kr";
+
+function isAdminEmail(email) {
+  if (!email) return false;
+  return email.toLowerCase().endsWith(ADMIN_EMAIL_DOMAIN.toLowerCase());
+}
+
+function loginIdToAuthEmail(raw) {
+  const s = (raw || "").trim();
+  if (!s) return s;
+  if (s.indexOf("@") >= 0) return s;
+  if (s.toLowerCase() === SHARED_LOGIN_ID) return SHARED_AUTH_EMAIL;
+  return s;
+}
+
+function isSharedNeoRabbitUser(user) {
+  return !!(user && user.email && user.email.toLowerCase() === SHARED_AUTH_EMAIL.toLowerCase());
+}
+
+function mapAuthError(e) {
+  const c = e && e.code;
+  if (c === "auth/email-already-in-use") return "이미 가입된 이메일입니다.";
+  if (c === "auth/invalid-email") return "이메일 형식을 확인해 주세요.";
+  if (c === "auth/weak-password") return "비밀번호는 6자 이상으로 설정해 주세요.";
+  if (c === "auth/user-not-found") return "가입된 계정이 없습니다.";
+  if (c === "auth/wrong-password" || c === "auth/invalid-credential") return "이메일 또는 비밀번호를 확인해 주세요.";
+  if (c === "auth/too-many-requests") return "시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+  if (c === "auth/network-request-failed") return "네트워크를 확인해 주세요.";
+  return (e && e.message) || String(e);
+}
+
+function AdminLoginGate() {
+  const [user, setUser] = useState(undefined);
+  const [authErr, setAuthErr] = useState("");
+  const [configError, setConfigError] = useState("");
+  const [authMode, setAuthMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
+  const [adminAllowed, setAdminAllowed] = useState(null);
+
+  useEffect(() => {
+    const cfg = window.__NEO_FIREBASE_CONFIG__;
+    if (!cfg || !cfg.apiKey || String(cfg.apiKey).indexOf("YOUR_") === 0) {
+      setConfigError("neo 폴더의 firebase-config.js에 Firebase 웹 앱 설정을 넣어주세요.");
+      setUser(null);
+      return undefined;
+    }
+    setConfigError("");
+    if (!firebase.apps.length) firebase.initializeApp(cfg);
+    if (typeof window.neoActivateAppCheckIfConfigured === "function") window.neoActivateAppCheckIfConfigured();
+    return firebase.auth().onAuthStateChanged(setUser);
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setAdminAllowed(null);
+      return undefined;
+    }
+    if (isSharedNeoRabbitUser(user)) {
+      setAdminAllowed(true);
+      return undefined;
+    }
+    if (isAdminEmail(user.email)) {
+      setAdminAllowed(true);
+      return undefined;
+    }
+    const db = firebase.firestore();
+    const unsub = db.collection("profiles").doc(user.uid).onSnapshot(
+      snap => setAdminAllowed(!!(snap.exists && snap.data().role === "admin")),
+      () => setAdminAllowed(false)
+    );
+    return () => unsub();
+  }, [user]);
+
+  const doLogin = async e => {
+    e.preventDefault();
+    setAuthErr("");
+    setInfoMsg("");
+    try {
+      await firebase.auth().signInWithEmailAndPassword(loginIdToAuthEmail(email), password);
+    } catch (err) {
+      setAuthErr(mapAuthError(err));
+    }
+  };
+
+  const doSignup = async e => {
+    e.preventDefault();
+    setAuthErr("");
+    setInfoMsg("");
+    const authEmail = loginIdToAuthEmail(email);
+    if (authEmail === SHARED_AUTH_EMAIL) {
+      setAuthErr("공용 아이디 " + SHARED_LOGIN_ID + " 는 회원가입 없이 로그인만 사용하세요.");
+      return;
+    }
+    if (password.length < 6) {
+      setAuthErr("비밀번호는 6자 이상이어야 합니다.");
+      return;
+    }
+    if (password !== password2) {
+      setAuthErr("비밀번호가 서로 일치하지 않습니다.");
+      return;
+    }
+    try {
+      await firebase.auth().createUserWithEmailAndPassword(authEmail, password);
+    } catch (err) {
+      setAuthErr(mapAuthError(err));
+    }
+  };
+
+  const doResetPassword = async e => {
+    e.preventDefault();
+    setAuthErr("");
+    setInfoMsg("");
+    const em = loginIdToAuthEmail(email).trim();
+    if (!em) {
+      setAuthErr("아이디 또는 이메일을 입력해 주세요.");
+      return;
+    }
+    try {
+      await firebase.auth().sendPasswordResetEmail(em);
+      setInfoMsg("비밀번호 재설정 링크를 메일로 보냈습니다. 받은편지함(스팸함 포함)을 확인해 주세요.");
+    } catch (err) {
+      setAuthErr(mapAuthError(err));
+    }
+  };
+
+  const inStyle = { width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 14, boxSizing: "border-box", background: "#FAFAFA" };
+  const lb = { display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 6 };
+  const linkBtn = { background: "none", border: "none", cursor: "pointer", color: "#028090", fontSize: 13, fontWeight: 600, textDecoration: "underline", padding: 0 };
+
+  if (configError) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ color: "#DC2626", maxWidth: 440, textAlign: "center", lineHeight: 1.6, fontSize: 14 }}>{configError}</div>
+      </div>
+    );
+  }
+  if (user === undefined) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 15, color: "#6B7280" }}>로그인 확인 중…</div>
+      </div>
+    );
+  }
+  if (!user) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ width: "100%", maxWidth: 400, background: "#fff", borderRadius: 20, padding: "32px 28px", boxShadow: "0 4px 24px rgba(0,0,0,0.08)" }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#1A1A2E", marginBottom: 6 }}>NeoRabbit 관리자</div>
+          <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 22, lineHeight: 1.5 }}>
+            {authMode === "login" && ("공용: 아이디 " + SHARED_LOGIN_ID + " / 비밀번호는 관리자가 설정한 값. 그 외는 이메일로 로그인.")}
+            {authMode === "signup" && "회원가입 후, " + ADMIN_EMAIL_DOMAIN + " 이거나 Firestore profiles에 role admin이면 접속 가능합니다."}
+            {authMode === "forgotId" && "아이디(로그인 ID) 안내"}
+            {authMode === "forgotPw" && "가입 시 이메일로 재설정 링크를 보냅니다."}
+          </p>
+
+          {authMode === "forgotId" && (
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontSize: 14, color: "#374151", lineHeight: 1.7 }}>공용 계정은 아이디 <b>{SHARED_LOGIN_ID}</b> 입니다. 그 외는 <b>가입 시 이메일</b>이 아이디입니다. 이메일이 기억나지 않으면 관리자에게 문의하세요.</p>
+              <button type="button" style={{ ...linkBtn, marginTop: 16 }} onClick={() => { setAuthMode("login"); setAuthErr(""); setInfoMsg(""); }}>로그인으로 돌아가기</button>
+            </div>
+          )}
+
+          {(authMode === "login" || authMode === "signup" || authMode === "forgotPw") && (
+            <form onSubmit={authMode === "login" ? doLogin : authMode === "signup" ? doSignup : doResetPassword}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={lb}>아이디 또는 이메일</label>
+                <input type="text" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} style={inStyle} placeholder={SHARED_LOGIN_ID + " 또는 name@company.com"} required />
+              </div>
+              {authMode !== "forgotPw" && (
+                <div style={{ marginBottom: 14 }}>
+                  <label style={lb}>비밀번호</label>
+                  <input type="password" autoComplete={authMode === "signup" ? "new-password" : "current-password"} value={password} onChange={e => setPassword(e.target.value)} style={inStyle} placeholder="6자 이상" required={authMode !== "forgotPw"} />
+                </div>
+              )}
+              {authMode === "signup" && (
+                <div style={{ marginBottom: 18 }}>
+                  <label style={lb}>비밀번호 확인</label>
+                  <input type="password" autoComplete="new-password" value={password2} onChange={e => setPassword2(e.target.value)} style={inStyle} placeholder="다시 입력" required />
+                </div>
+              )}
+              {authErr ? <div style={{ color: "#DC2626", fontSize: 13, marginBottom: 12 }}>{authErr}</div> : null}
+              {infoMsg ? <div style={{ color: "#059669", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{infoMsg}</div> : null}
+              <button type="submit" style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 15, background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff", marginBottom: 14 }}>
+                {authMode === "login" ? "로그인" : authMode === "signup" ? "회원가입" : "재설정 메일 보내기"}
+              </button>
+            </form>
+          )}
+
+          {authMode === "login" && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "12px 16px", justifyContent: "center", marginTop: 8 }}>
+              <button type="button" style={linkBtn} onClick={() => { setAuthMode("signup"); setAuthErr(""); setInfoMsg(""); }}>회원가입</button>
+              <button type="button" style={linkBtn} onClick={() => { setAuthMode("forgotId"); setAuthErr(""); setInfoMsg(""); }}>아이디 찾기</button>
+              <button type="button" style={linkBtn} onClick={() => { setAuthMode("forgotPw"); setAuthErr(""); setInfoMsg(""); }}>비밀번호 찾기</button>
+            </div>
+          )}
+          {authMode === "signup" && (
+            <button type="button" style={{ ...linkBtn, display: "block", margin: "0 auto" }} onClick={() => { setAuthMode("login"); setAuthErr(""); setInfoMsg(""); }}>이미 계정이 있어요</button>
+          )}
+          {authMode === "forgotPw" && (
+            <button type="button" style={{ ...linkBtn, display: "block", margin: "12px auto 0" }} onClick={() => { setAuthMode("login"); setAuthErr(""); setInfoMsg(""); }}>로그인으로 돌아가기</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (adminAllowed === null) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 15, color: "#6B7280" }}>관리자 권한 확인 중…</div>
+      </div>
+    );
+  }
+  if (!adminAllowed) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 14, padding: 24 }}>
+        <div style={{ color: "#DC2626", fontWeight: 800, fontSize: 16 }}>접근 권한이 없습니다</div>
+        <p style={{ color: "#6B7280", fontSize: 14, textAlign: "center", maxWidth: 400, lineHeight: 1.6 }}>
+          관리자는 공용 아이디 <b>{SHARED_LOGIN_ID}</b>, 또는 <b>{ADMIN_EMAIL_DOMAIN}</b> 이메일, 또는 Firestore <b>profiles</b>에 <code>role: admin</code>인 경우에만 이용할 수 있습니다.
+        </p>
+        <button type="button" onClick={() => firebase.auth().signOut()} style={{ padding: "10px 22px", borderRadius: 10, border: "1px solid #E5E7EB", cursor: "pointer", background: "#fff", fontWeight: 600 }}>다른 계정으로 로그인</button>
+      </div>
+    );
+  }
+  return <Dashboard />;
+}
+
+async function ensureNeoSeed(db) {
+  const appRef = db.collection("settings").doc("app");
+  const snap = await appRef.get();
+  if (snap.exists && snap.data().seeded) return;
+  const anyRep = await db.collection("reps").limit(1).get();
+  if (!anyRep.empty) {
+    await appRef.set({ seeded: true }, { merge: true });
+    return;
+  }
+  const batch = db.batch();
+  batch.set(appRef, { regions: initialRegions, seeded: true });
+  for (const rep of initialSalesReps) {
+    const rid = String(rep.id);
+    const rRef = db.collection("reps").doc(rid);
+    batch.set(rRef, {
+      name: rep.name,
+      region: rep.region,
+      phone: rep.phone,
+      joinDate: rep.joinDate,
+      status: rep.status,
+    });
+    for (const st of rep.stores) {
+      const sRef = db.collection("stores").doc();
+      batch.set(sRef, {
+        repId: rid,
+        name: st.name,
+        type: st.type,
+        date: st.date,
+        activated: !!st.activated,
+        note: st.note || "",
+        address: st.address || "",
+      });
+    }
+  }
+  for (const v of initialVisitsSeed) {
+    const vRef = db.collection("visits").doc();
+    batch.set(vRef, { repId: "1", name: v.name, address: v.address || "", date: v.date, result: v.result, note: v.note || "" });
+  }
+  await batch.commit();
+}
+
+const initialVisitsSeed = [
+  { name: "스시 오마카세", address: "용인시 수지구 성복동 200", date: "2026-04-10", result: "success", note: "입점 완료, 활성화 안내함" },
+  { name: "꽃집 라벤더", address: "용인시 수지구 풍덕천동 88", date: "2026-04-10", result: "retry", note: "바빠서 다음주 재방문 약속" },
+  { name: "PT 짐", address: "용인시 기흥구 구갈동 55", date: "2026-04-10", result: "fail", note: "관심 없다고 거절" },
+];
+
+const initialRegions = ["용인", "동탄", "수원"];
+
+const initialSalesReps = [
+  { id: 1, name: "김민수", region: "용인", phone: "010-1234-5678", joinDate: "2026-04-01", status: "active",
+    stores: [
+      { name: "카페 블루", type: "카페", date: "2026-04-03", activated: true },
+      { name: "맛있는 분식", type: "음식점", date: "2026-04-04", activated: true },
+      { name: "헤어살롱 미미", type: "미용실", date: "2026-04-05", activated: false },
+      { name: "동네 세탁소", type: "세탁소", date: "2026-04-07", activated: true },
+      { name: "피자 용인점", type: "음식점", date: "2026-04-08", activated: false },
+    ]
+  },
+  { id: 2, name: "이서연", region: "동탄", phone: "010-2345-6789", joinDate: "2026-04-02", status: "active",
+    stores: [
+      { name: "카페 동탄점", type: "카페", date: "2026-04-03", activated: true },
+      { name: "네일아트 뷰티", type: "뷰티", date: "2026-04-05", activated: true },
+      { name: "동탄 치킨", type: "음식점", date: "2026-04-06", activated: true },
+    ]
+  },
+  { id: 3, name: "박준혁", region: "수원", phone: "010-3456-7890", joinDate: "2026-04-03", status: "active",
+    stores: [
+      { name: "수원 통닭", type: "음식점", date: "2026-04-04", activated: true },
+      { name: "럭키 헬스장", type: "헬스장", date: "2026-04-06", activated: false },
+      { name: "아름다운 꽃집", type: "기타", date: "2026-04-07", activated: true },
+      { name: "버거 수원점", type: "음식점", date: "2026-04-08", activated: true },
+      { name: "세븐 카페", type: "카페", date: "2026-04-09", activated: false },
+      { name: "미소 네일", type: "뷰티", date: "2026-04-09", activated: true },
+      { name: "수원 빨래방", type: "세탁소", date: "2026-04-10", activated: false },
+    ]
+  },
+];
+
+function Badge({ children, color }) {
+  const colors = {
+    teal: { bg: "#E6FFFA", text: "#028090", border: "#B2F5EA" },
+    orange: { bg: "#FFF7ED", text: "#C2410C", border: "#FED7AA" },
+    red: { bg: "#FEF2F2", text: "#DC2626", border: "#FECACA" },
+    gray: { bg: "#F3F4F6", text: "#6B7280", border: "#E5E7EB" },
+    blue: { bg: "#EFF6FF", text: "#2563EB", border: "#BFDBFE" },
+  };
+  const c = colors[color] || colors.gray;
+  return (
+    <span style={{
+      display: "inline-block", padding: "2px 10px", borderRadius: 20, marginLeft: 6,
+      fontSize: 12, fontWeight: 600, background: c.bg, color: c.text,
+      border: `1px solid ${c.border}`,
+    }}>{children}</span>
+  );
+}
+
+function StatCard({ label, value, sub, icon }) {
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 16, padding: "22px 24px",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)",
+      flex: 1, minWidth: 160, position: "relative", overflow: "hidden",
+    }}>
+      <div style={{ position: "absolute", top: 14, right: 16, fontSize: 26, opacity: 0.12 }}>{icon}</div>
+      <div style={{ fontSize: 12, color: "#6B7280", fontWeight: 500, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 800, color: "#1A1A2E", letterSpacing: -1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "#028090", marginTop: 3, fontWeight: 500 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function Modal({ open, onClose, title, children }) {
+  if (!open) return null;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 1000,
+      background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center",
+      backdropFilter: "blur(4px)",
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 20, padding: 32, width: "90%", maxWidth: 460,
+        boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+          <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#1A1A2E" }}>{title}</h3>
+          <button onClick={onClose} style={{
+            width: 32, height: 32, borderRadius: 8, border: "none", background: "#F3F4F6",
+            cursor: "pointer", fontSize: 16, color: "#6B7280", display: "flex", alignItems: "center", justifyContent: "center",
+          }}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function InputField({ label, value, onChange, placeholder, type }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>{label}</label>
+      <input type={type || "text"} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        style={{
+          width: "100%", padding: "10px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB",
+          fontSize: 14, outline: "none", transition: "border 0.2s", boxSizing: "border-box",
+          background: "#FAFAFA",
+        }}
+        onFocus={e => e.target.style.borderColor = "#028090"}
+        onBlur={e => e.target.style.borderColor = "#E5E7EB"}
+      />
+    </div>
+  );
+}
+
+function SelectField({ label, value, onChange, options }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>{label}</label>
+      <select value={value} onChange={e => onChange(e.target.value)}
+        style={{
+          width: "100%", padding: "10px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB",
+          fontSize: 14, outline: "none", background: "#FAFAFA", boxSizing: "border-box", cursor: "pointer",
+        }}>
+        <option value="">선택하세요</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function PrimaryButton({ children, onClick, disabled, full }) {
+  return (
+    <button onClick={onClick} disabled={disabled}
+      style={{
+        padding: "12px 28px", borderRadius: 10, border: "none", cursor: disabled ? "not-allowed" : "pointer",
+        fontSize: 14, fontWeight: 700, width: full ? "100%" : "auto",
+        background: disabled ? "#D1D5DB" : "linear-gradient(135deg, #028090, #00A896)",
+        color: "#fff", transition: "opacity 0.2s", opacity: disabled ? 0.6 : 1,
+      }}>
+      {children}
+    </button>
+  );
+}
+
+function Dashboard() {
+  const [repRows, setRepRows] = useState([]);
+  const [storeRows, setStoreRows] = useState([]);
+  const [visitRows, setVisitRows] = useState([]);
+  const [regions, setRegions] = useState([]);
+  const [loadState, setLoadState] = useState({ loading: true, error: "" });
+  const [selectedRegion, setSelectedRegion] = useState("전체");
+  const [selectedRep, setSelectedRep] = useState(null);
+  const [view, setView] = useState("dashboard");
+  const [showAddRep, setShowAddRep] = useState(false);
+  const [showAddRegion, setShowAddRegion] = useState(false);
+  const [showDeleteRepModal, setShowDeleteRepModal] = useState(false);
+  const [repPendingDelete, setRepPendingDelete] = useState(null);
+  const [notifBanner, setNotifBanner] = useState("");
+  const [notifEnabled, setNotifEnabled] = useState(() => {
+    try {
+      return typeof Notification !== "undefined" && Notification.permission === "granted" && localStorage.getItem("neo_admin_notif") === "1";
+    } catch (e) {
+      return false;
+    }
+  });
+  const activityBaselineRef = useRef(false);
+  const prevRepIdsRef = useRef(null);
+  const prevStoreIdsRef = useRef(null);
+  const prevVisitIdsRef = useRef(null);
+  const [activityTrackReady, setActivityTrackReady] = useState(false);
+  const [newRep, setNewRep] = useState({ name: "", region: "", phone: "" });
+  const [newRegion, setNewRegion] = useState("");
+
+  const reps = useMemo(() => {
+    return repRows.map(r => ({
+      id: r.id,
+      name: r.name,
+      region: r.region,
+      phone: r.phone,
+      joinDate: r.joinDate,
+      status: r.status,
+      stores: storeRows.filter(s => s.repId === r.id).map(s => ({
+        id: s.id,
+        name: s.name,
+        type: s.type,
+        date: s.date,
+        activated: !!s.activated,
+        note: s.note || "",
+        address: s.address || "",
+      })),
+    }));
+  }, [repRows, storeRows]);
+
+  useEffect(() => {
+    const cfg = window.__NEO_FIREBASE_CONFIG__;
+    if (!cfg || !cfg.apiKey || String(cfg.apiKey).indexOf("YOUR_") === 0) {
+      setLoadState({ loading: false, error: "neo 폴더의 firebase-config.js에 Firebase 웹 앱 설정값을 넣어주세요." });
+      return;
+    }
+    let unsubReps, unsubStores, unsubVisits, unsubSettings;
+    (async () => {
+      try {
+        if (!firebase.apps.length) firebase.initializeApp(cfg);
+        if (typeof window.neoActivateAppCheckIfConfigured === "function") window.neoActivateAppCheckIfConfigured();
+        const db = firebase.firestore();
+        await ensureNeoSeed(db);
+        unsubSettings = db.collection("settings").doc("app").onSnapshot(doc => {
+          const d = doc.data();
+          setRegions(Array.isArray(d && d.regions) ? d.regions : []);
+        });
+        unsubReps = db.collection("reps").onSnapshot(snap => {
+          setRepRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        });
+        unsubStores = db.collection("stores").onSnapshot(snap => {
+          setStoreRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        });
+        unsubVisits = db.collection("visits").onSnapshot(snap => {
+          setVisitRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        });
+        setLoadState({ loading: false, error: "" });
+      } catch (e) {
+        console.error(e);
+        setLoadState({ loading: false, error: (e && e.message) || String(e) });
+      }
+    })();
+    return () => {
+      if (unsubReps) unsubReps();
+      if (unsubStores) unsubStores();
+      if (unsubVisits) unsubVisits();
+      if (unsubSettings) unsubSettings();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loadState.loading || loadState.error) {
+      setActivityTrackReady(false);
+      activityBaselineRef.current = false;
+      prevRepIdsRef.current = null;
+      prevStoreIdsRef.current = null;
+      prevVisitIdsRef.current = null;
+      return undefined;
+    }
+    const id = setTimeout(() => setActivityTrackReady(true), 1500);
+    return () => clearTimeout(id);
+  }, [loadState.loading, loadState.error]);
+
+  useEffect(() => {
+    if (loadState.loading || loadState.error || !activityTrackReady) return;
+    const repById = Object.fromEntries(repRows.map(r => [String(r.id), r]));
+    const nextRep = new Set(repRows.map(r => r.id));
+    const nextStore = new Set(storeRows.map(s => s.id));
+    const nextVisit = new Set(visitRows.map(v => v.id));
+    if (!activityBaselineRef.current) {
+      activityBaselineRef.current = true;
+      prevRepIdsRef.current = nextRep;
+      prevStoreIdsRef.current = nextStore;
+      prevVisitIdsRef.current = nextVisit;
+      return;
+    }
+    const prevR = prevRepIdsRef.current;
+    const prevS = prevStoreIdsRef.current;
+    const prevV = prevVisitIdsRef.current;
+    repRows.forEach(r => {
+      if (!prevR.has(r.id)) sendNeoAdminNotification("NeoRabbit · 신규 영업사원", (r.name || "") + " 님이 등록되었습니다.");
+    });
+    storeRows.forEach(s => {
+      if (!prevS.has(s.id)) {
+        const rn = repById[String(s.repId)] && repById[String(s.repId)].name ? repById[String(s.repId)].name : "담당자";
+        sendNeoAdminNotification("NeoRabbit · 신규 입점", (s.name || "업체") + " · " + rn);
+      }
+    });
+    visitRows.forEach(v => {
+      if (!prevV.has(v.id)) sendNeoAdminNotification("NeoRabbit · 신규 방문 기록", (v.name || "업체") + " · " + (v.result || ""));
+    });
+    prevRepIdsRef.current = nextRep;
+    prevStoreIdsRef.current = nextStore;
+    prevVisitIdsRef.current = nextVisit;
+  }, [repRows, storeRows, visitRows, loadState.loading, loadState.error, activityTrackReady]);
+
+  const enableBrowserNotifications = async () => {
+    if (typeof Notification === "undefined") {
+      alert("이 브라우저는 알림을 지원하지 않습니다.");
+      return;
+    }
+    const p = await Notification.requestPermission();
+    if (p === "granted") {
+      try {
+        localStorage.setItem("neo_admin_notif", "1");
+      } catch (e) { /* ignore */ }
+      setNotifEnabled(true);
+      setNotifBanner("브라우저 알림이 켜졌습니다. 이 탭이 열려 있거나 백그라운드일 때 신규 활동을 알려 드립니다.");
+      sendNeoAdminNotification("NeoRabbit", "신규 활동 알림이 설정되었습니다.");
+    } else {
+      setNotifBanner("알림 권한이 거절되었습니다. 브라우저 설정에서 이 사이트 알림을 허용해 주세요.");
+    }
+  };
+
+  useEffect(() => {
+    setSelectedRep(prev => {
+      if (!prev) return prev;
+      const next = reps.find(r => String(r.id) === String(prev.id));
+      return next !== undefined ? next : prev;
+    });
+  }, [reps]);
+
+  const filtered = selectedRegion === "전체" ? reps : reps.filter(r => r.region === selectedRegion);
+  const totalStores = reps.reduce((a, r) => a + r.stores.length, 0);
+  const activatedStores = reps.reduce((a, r) => a + r.stores.filter(s => s.activated).length, 0);
+  const totalIncentive = reps.reduce((a, r) => a + r.stores.length * 20000 + r.stores.filter(s => s.activated).length * 10000, 0);
+  const activeReps = reps.filter(r => r.status === "active").length;
+
+  const regionStats = regions.map(region => {
+    const regionReps = reps.filter(r => r.region === region);
+    const stores = regionReps.reduce((a, r) => a + r.stores.length, 0);
+    const activated = regionReps.reduce((a, r) => a + r.stores.filter(s => s.activated).length, 0);
+    return { region, reps: regionReps.length, stores, activated };
+  });
+
+  const handleAddRep = async () => {
+    if (!newRep.name || !newRep.region || !newRep.phone) return;
+    try {
+      const db = firebase.firestore();
+      await db.collection("reps").add({
+        name: newRep.name,
+        region: newRep.region,
+        phone: newRep.phone,
+        joinDate: new Date().toISOString().slice(0, 10),
+        status: "active",
+      });
+      setNewRep({ name: "", region: "", phone: "" });
+      setShowAddRep(false);
+    } catch (e) {
+      alert("저장 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const handleAddRegion = async () => {
+    const trimmed = newRegion.trim();
+    if (!trimmed || regions.includes(trimmed)) return;
+    try {
+      const db = firebase.firestore();
+      const ref = db.collection("settings").doc("app");
+      const doc = await ref.get();
+      const cur = (doc.exists && Array.isArray(doc.data().regions)) ? doc.data().regions : [];
+      await ref.set({ regions: [...cur, trimmed], seeded: true }, { merge: true });
+      setNewRegion("");
+      setShowAddRegion(false);
+    } catch (e) {
+      alert("저장 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const handleDeleteRegion = async (regionToDelete) => {
+    if (reps.some(r => r.region === regionToDelete)) {
+      alert('"' + regionToDelete + '" 지역에 소속된 매니저가 있어 삭제할 수 없습니다.');
+      return;
+    }
+    try {
+      const db = firebase.firestore();
+      const ref = db.collection("settings").doc("app");
+      const doc = await ref.get();
+      const cur = (doc.exists && Array.isArray(doc.data().regions)) ? doc.data().regions : [];
+      await ref.set({ regions: cur.filter(r => r !== regionToDelete) }, { merge: true });
+      if (selectedRegion === regionToDelete) setSelectedRegion("전체");
+    } catch (e) {
+      alert("삭제 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const handleToggleStatus = async (repId) => {
+    const r = reps.find(x => String(x.id) === String(repId));
+    if (!r) return;
+    const next = r.status === "active" ? "inactive" : "active";
+    try {
+      const db = firebase.firestore();
+      await db.collection("reps").doc(String(repId)).update({ status: next });
+    } catch (e) {
+      alert("상태 변경 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const commitDeleteRep = async () => {
+    if (!repPendingDelete) return;
+    const rid = String(repPendingDelete.id);
+    try {
+      const db = firebase.firestore();
+      const runBatchDeletes = async (snap) => {
+        let batch = db.batch();
+        let n = 0;
+        for (let i = 0; i < snap.docs.length; i++) {
+          batch.delete(snap.docs[i].ref);
+          n++;
+          if (n >= 400) {
+            await batch.commit();
+            batch = db.batch();
+            n = 0;
+          }
+        }
+        if (n > 0) await batch.commit();
+      };
+      const storesSnap = await db.collection("stores").where("repId", "==", rid).get();
+      await runBatchDeletes(storesSnap);
+      const visitsSnap = await db.collection("visits").where("repId", "==", rid).get();
+      await runBatchDeletes(visitsSnap);
+      await db.collection("reps").doc(rid).delete();
+      setShowDeleteRepModal(false);
+      setRepPendingDelete(null);
+      if (selectedRep && String(selectedRep.id) === rid) setSelectedRep(null);
+    } catch (e) {
+      alert("삭제 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  if (loadState.loading) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
+        <div style={{ fontSize: 15, color: "#6B7280" }}>Firestore에 연결하는 중…</div>
+      </div>
+    );
+  }
+  if (loadState.error) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ color: "#DC2626", maxWidth: 440, textAlign: "center", lineHeight: 1.6, fontSize: 14 }}>{loadState.error}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#F8FAFB" }}>
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg, #028090 0%, #00A896 100%)", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17 }}>🐰</div>
+          <div>
+            <div style={{ color: "#fff", fontSize: 17, fontWeight: 800, letterSpacing: -0.5 }}>NeoRabbit Admin</div>
+            <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 11 }}>영업사원 관리 시스템</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {["dashboard", "reps", "regions"].map(v => (
+            <button key={v} onClick={() => { setView(v); setSelectedRep(null); }} style={{
+              padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, transition: "all 0.2s",
+              background: view === v ? "#fff" : "rgba(255,255,255,0.15)", color: view === v ? "#028090" : "#fff",
+            }}>
+              {v === "dashboard" ? "대시보드" : v === "reps" ? "영업사원" : "지역 관리"}
+            </button>
+          ))}
+          <button type="button" onClick={enableBrowserNotifications} style={{
+            padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 12, fontWeight: 600,
+            background: notifEnabled ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.08)", color: "#fff",
+          }}>{notifEnabled ? "알림 켜짐" : "신규 알림 켜기"}</button>
+          <button type="button" onClick={() => firebase.auth().signOut()} style={{
+            padding: "7px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 12, fontWeight: 600,
+            background: "rgba(0,0,0,0.08)", color: "#fff",
+          }}>로그아웃</button>
+        </div>
+      </div>
+
+      {notifBanner ? (
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "10px 16px 0", fontSize: 12, color: "#374151" }}>
+          <span style={{ background: "#E0F2F1", padding: "8px 12px", borderRadius: 8, display: "inline-block" }}>{notifBanner}</span>
+        </div>
+      ) : null}
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 16px" }}>
+        {/* DASHBOARD */}
+        {view === "dashboard" && !selectedRep && (<React.Fragment>
+          <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
+            <StatCard label="총 입점 업체" value={totalStores} sub={"활성화 " + activatedStores + "곳"} icon="🏪" />
+            <StatCard label="활성화율" value={(totalStores ? Math.round(activatedStores / totalStores * 100) : 0) + "%"} sub={activatedStores + " / " + totalStores} icon="✅" />
+            <StatCard label="활동 매니저" value={activeReps + "명"} sub={"전체 " + reps.length + "명"} icon="👤" />
+            <StatCard label="누적 인센티브" value={(totalIncentive / 10000).toFixed(0) + "만원"} icon="💰" />
+          </div>
+
+          <div style={{ background: "#fff", borderRadius: 16, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)", marginBottom: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#1A1A2E" }}>거점별 현황</h3>
+              <button onClick={() => setShowAddRegion(true)} style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px dashed #028090", background: "transparent", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#028090" }}>+ 지역 추가</button>
+            </div>
+            {regionStats.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF", fontSize: 14 }}>등록된 지역이 없습니다. 지역을 추가해주세요.</div>
+            ) : (
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                {regionStats.map(rs => (
+                  <div key={rs.region} style={{ flex: 1, minWidth: 200, padding: 18, borderRadius: 12, background: "#F8FAFB", border: "1px solid #E5E7EB" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <span style={{ fontSize: 17, fontWeight: 800, color: "#1A1A2E" }}>{rs.region}</span>
+                      <Badge color="blue">{rs.reps}명</Badge>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, color: "#6B7280" }}>입점</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E" }}>{rs.stores}곳</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                      <span style={{ fontSize: 12, color: "#6B7280" }}>활성화</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#028090" }}>{rs.activated}곳</span>
+                    </div>
+                    <div style={{ height: 5, borderRadius: 3, background: "#E5E7EB", overflow: "hidden" }}>
+                      <div style={{ height: "100%", borderRadius: 3, background: "linear-gradient(90deg, #028090, #02C39A)", width: (rs.stores ? (rs.activated / rs.stores * 100) : 0) + "%", transition: "width 0.5s" }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: "#9CA3AF", marginTop: 3, textAlign: "right" }}>활성화율 {rs.stores ? Math.round(rs.activated / rs.stores * 100) : 0}%</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ background: "#fff", borderRadius: 16, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: "#1A1A2E" }}>최근 입점 업체</h3>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ borderBottom: "2px solid #E5E7EB" }}>
+                  {["업체명", "업종", "거점", "담당", "입점일", "상태"].map(h => (
+                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "#6B7280", fontWeight: 600, fontSize: 11 }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {reps.flatMap(r => r.stores.map(s => ({ ...s, rep: r.name, region: r.region }))).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map((s, i) => (
+                    <tr key={(s.id || s.name) + "-" + i} style={{ borderBottom: "1px solid #F3F4F6" }}>
+                      <td style={{ padding: "10px", fontWeight: 600, color: "#1A1A2E" }}>{s.name}</td>
+                      <td style={{ padding: "10px", color: "#6B7280" }}>{s.type}</td>
+                      <td style={{ padding: "10px" }}><Badge color="blue">{s.region}</Badge></td>
+                      <td style={{ padding: "10px", color: "#374151" }}>{s.rep}</td>
+                      <td style={{ padding: "10px", color: "#6B7280" }}>{s.date}</td>
+                      <td style={{ padding: "10px" }}><Badge color={s.activated ? "teal" : "orange"}>{s.activated ? "활성화" : "미활성화"}</Badge></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </React.Fragment>)}
+
+        {/* REPS LIST */}
+        {view === "reps" && !selectedRep && (<React.Fragment>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {["전체", ...regions].map(r => (
+                <button key={r} onClick={() => setSelectedRegion(r)} style={{
+                  padding: "7px 18px", borderRadius: 8, border: "1px solid #E5E7EB", cursor: "pointer", fontSize: 13, fontWeight: 600,
+                  background: selectedRegion === r ? "#028090" : "#fff", color: selectedRegion === r ? "#fff" : "#374151", borderColor: selectedRegion === r ? "#028090" : "#E5E7EB",
+                }}>{r}</button>
+              ))}
+            </div>
+            <button onClick={() => setShowAddRep(true)} style={{
+              padding: "9px 20px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff",
+              background: "linear-gradient(135deg, #028090, #00A896)",
+            }}>+ 영업사원 추가</button>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div style={{ background: "#fff", borderRadius: 16, padding: 60, textAlign: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>👤</div>
+              <div style={{ fontSize: 15, color: "#6B7280", marginBottom: 16 }}>등록된 영업사원이 없습니다</div>
+              <button onClick={() => setShowAddRep(true)} style={{ padding: "10px 24px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff", background: "linear-gradient(135deg, #028090, #00A896)" }}>첫 영업사원 추가하기</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {filtered.map(rep => {
+                const activated = rep.stores.filter(s => s.activated).length;
+                const incentive = rep.stores.length * 20000 + activated * 10000;
+                return (
+                  <div key={rep.id} onClick={() => setSelectedRep(rep)} style={{
+                    background: "#fff", borderRadius: 16, padding: 22, cursor: "pointer",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)",
+                    transition: "transform 0.15s", border: "1.5px solid transparent",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.borderColor = "#028090"; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.borderColor = "transparent"; }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div style={{
+                          width: 46, height: 46, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, fontWeight: 800,
+                          background: rep.status === "active" ? "linear-gradient(135deg, #028090, #02C39A)" : "#D1D5DB", color: "#fff",
+                        }}>{rep.name[0]}</div>
+                        <div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: "#1A1A2E", display: "flex", alignItems: "center" }}>
+                            {rep.name}<Badge color={rep.status === "active" ? "teal" : "red"}>{rep.status === "active" ? "활동중" : "비활동"}</Badge>
+                          </div>
+                          <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>{rep.region} · {rep.phone}</div>
+                          <div style={{ fontSize: 10, color: "#B0B7C3", marginTop: 4, fontFamily: "ui-monospace, monospace" }} title="영업사원용 앱에서 이 ID로 연결">담당 ID: {rep.id}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                        <div style={{ display: "flex", gap: 20 }}>
+                          <div style={{ textAlign: "center" }}><div style={{ fontSize: 10, color: "#9CA3AF" }}>입점</div><div style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E" }}>{rep.stores.length}</div></div>
+                          <div style={{ textAlign: "center" }}><div style={{ fontSize: 10, color: "#9CA3AF" }}>활성화</div><div style={{ fontSize: 20, fontWeight: 800, color: "#028090" }}>{activated}</div></div>
+                          <div style={{ textAlign: "center" }}><div style={{ fontSize: 10, color: "#9CA3AF" }}>인센티브</div><div style={{ fontSize: 20, fontWeight: 800, color: "#F59E0B" }}>{(incentive/10000).toFixed(0)}만</div></div>
+                        </div>
+                        <button type="button" onClick={e => { e.stopPropagation(); setRepPendingDelete(rep); setShowDeleteRepModal(true); }} style={{
+                          padding: "8px 12px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#DC2626", flexShrink: 0,
+                        }}>삭제</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </React.Fragment>)}
+
+        {/* REP DETAIL */}
+        {selectedRep && (<React.Fragment>
+          <button onClick={() => setSelectedRep(null)} style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 18 }}>← 목록으로</button>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 26, boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 22 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ width: 52, height: 52, borderRadius: 15, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, background: "linear-gradient(135deg, #028090, #02C39A)", color: "#fff" }}>{selectedRep.name[0]}</div>
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E", display: "flex", alignItems: "center" }}>
+                    {selectedRep.name}<Badge color={selectedRep.status === "active" ? "teal" : "red"}>{selectedRep.status === "active" ? "활동중" : "비활동"}</Badge>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>{selectedRep.region} · {selectedRep.phone} · 합류 {selectedRep.joinDate}</div>
+                  <div style={{ fontSize: 11, color: "#B0B7C3", marginTop: 6, fontFamily: "ui-monospace, monospace" }}>영업사원 앱 연결 ID: {selectedRep.id}</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={() => handleToggleStatus(selectedRep.id)} style={{
+                  padding: "8px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
+                  background: selectedRep.status === "active" ? "#FEF2F2" : "#E6FFFA", color: selectedRep.status === "active" ? "#DC2626" : "#028090",
+                }}>{selectedRep.status === "active" ? "비활동 처리" : "활동 복구"}</button>
+                <button type="button" onClick={() => { setRepPendingDelete(selectedRep); setShowDeleteRepModal(true); }} style={{
+                  padding: "8px 18px", borderRadius: 8, border: "1px solid #FECACA", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                  background: "#FEF2F2", color: "#DC2626",
+                }}>영업사원 삭제</button>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, marginBottom: 22, flexWrap: "wrap" }}>
+              <StatCard label="입점" value={selectedRep.stores.length} icon="🏪" />
+              <StatCard label="활성화" value={selectedRep.stores.filter(s => s.activated).length} icon="✅" />
+              <StatCard label="미활성화" value={selectedRep.stores.filter(s => !s.activated).length} icon="⏳" />
+              <StatCard label="인센티브" value={((selectedRep.stores.length * 20000 + selectedRep.stores.filter(s => s.activated).length * 10000) / 10000).toFixed(0) + "만원"} icon="💰" />
+            </div>
+            <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: "#1A1A2E" }}>입점 업체 목록</h3>
+            {selectedRep.stores.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF", fontSize: 14 }}>아직 입점시킨 업체가 없습니다</div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ borderBottom: "2px solid #E5E7EB" }}>
+                  {["업체명", "업종", "입점일", "상태", "인센티브"].map(h => (
+                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "#6B7280", fontWeight: 600, fontSize: 11 }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {selectedRep.stores.map((s, i) => (
+                    <tr key={s.id || i} style={{ borderBottom: "1px solid #F3F4F6" }}>
+                      <td style={{ padding: "10px", fontWeight: 600, color: "#1A1A2E" }}>{s.name}</td>
+                      <td style={{ padding: "10px", color: "#6B7280" }}>{s.type}</td>
+                      <td style={{ padding: "10px", color: "#6B7280" }}>{s.date}</td>
+                      <td style={{ padding: "10px" }}><Badge color={s.activated ? "teal" : "orange"}>{s.activated ? "활성화" : "미활성화"}</Badge></td>
+                      <td style={{ padding: "10px", fontWeight: 700, color: s.activated ? "#028090" : "#F59E0B" }}>{s.activated ? "30,000원" : "20,000원"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </React.Fragment>)}
+
+        {/* REGION MANAGEMENT */}
+        {view === "regions" && (<React.Fragment>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#1A1A2E" }}>지역 관리</h2>
+            <button onClick={() => setShowAddRegion(true)} style={{
+              padding: "9px 20px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff",
+              background: "linear-gradient(135deg, #028090, #00A896)",
+            }}>+ 지역 추가</button>
+          </div>
+          {regions.length === 0 ? (
+            <div style={{ background: "#fff", borderRadius: 16, padding: 60, textAlign: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>📍</div>
+              <div style={{ fontSize: 15, color: "#6B7280", marginBottom: 16 }}>등록된 지역이 없습니다</div>
+              <button onClick={() => setShowAddRegion(true)} style={{ padding: "10px 24px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#fff", background: "linear-gradient(135deg, #028090, #00A896)" }}>첫 거점 지역 추가하기</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {regions.map(region => {
+                const regionReps = reps.filter(r => r.region === region);
+                const stores = regionReps.reduce((a, r) => a + r.stores.length, 0);
+                const activated = regionReps.reduce((a, r) => a + r.stores.filter(s => s.activated).length, 0);
+                return (
+                  <div key={region} style={{
+                    background: "#fff", borderRadius: 14, padding: "20px 24px",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)",
+                    display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                      <div style={{ width: 42, height: 42, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, background: "#E6FFFA", color: "#028090" }}>📍</div>
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: "#1A1A2E" }}>{region}</div>
+                        <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2 }}>매니저 {regionReps.length}명 · 입점 {stores}곳 · 활성화 {activated}곳</div>
+                      </div>
+                    </div>
+                    <button onClick={() => handleDeleteRegion(region)} style={{
+                      padding: "6px 14px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#DC2626",
+                    }}>삭제</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </React.Fragment>)}
+      </div>
+
+      {/* ADD REP MODAL */}
+      <Modal open={showAddRep} onClose={() => setShowAddRep(false)} title="영업사원 추가">
+        <InputField label="이름" value={newRep.name} onChange={v => setNewRep(p => ({ ...p, name: v }))} placeholder="홍길동" />
+        <SelectField label="담당 지역" value={newRep.region} onChange={v => setNewRep(p => ({ ...p, region: v }))} options={regions} />
+        <InputField label="연락처" value={newRep.phone} onChange={v => setNewRep(p => ({ ...p, phone: v }))} placeholder="010-0000-0000" type="tel" />
+        <div style={{ marginTop: 8 }}><PrimaryButton onClick={handleAddRep} disabled={!newRep.name || !newRep.region || !newRep.phone} full>추가하기</PrimaryButton></div>
+      </Modal>
+
+      {/* ADD REGION MODAL */}
+      <Modal open={showAddRegion} onClose={() => setShowAddRegion(false)} title="거점 지역 추가">
+        <InputField label="지역명" value={newRegion} onChange={setNewRegion} placeholder="예: 화성, 평택, 오산" />
+        {regions.includes(newRegion.trim()) && newRegion.trim() && (
+          <div style={{ fontSize: 12, color: "#DC2626", marginTop: -8, marginBottom: 12 }}>이미 등록된 지역입니다</div>
+        )}
+        <div style={{ marginTop: 8 }}><PrimaryButton onClick={handleAddRegion} disabled={!newRegion.trim() || regions.includes(newRegion.trim())} full>추가하기</PrimaryButton></div>
+      </Modal>
+
+      <Modal open={showDeleteRepModal} onClose={() => { setShowDeleteRepModal(false); setRepPendingDelete(null); }} title="영업사원 삭제">
+        {repPendingDelete && (
+          <React.Fragment>
+            <p style={{ fontSize: 14, color: "#374151", lineHeight: 1.6, marginBottom: 16 }}>
+              <b>{repPendingDelete.name}</b> (담당 ID: {repPendingDelete.id}) 및 이 담당자의 <b>모든 입점·방문 기록</b>이 Firestore에서 삭제됩니다. 되돌릴 수 없습니다.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => { setShowDeleteRepModal(false); setRepPendingDelete(null); }} style={{ padding: "10px 18px", borderRadius: 10, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", fontWeight: 600 }}>취소</button>
+              <button type="button" onClick={commitDeleteRep} style={{ padding: "10px 18px", borderRadius: 10, border: "none", background: "#DC2626", color: "#fff", cursor: "pointer", fontWeight: 700 }}>삭제 실행</button>
+            </div>
+          </React.Fragment>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<AdminLoginGate />);
+</script>
+</body>
+</html>
