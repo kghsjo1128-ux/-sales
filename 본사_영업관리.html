@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NeoRabbit Admin - 영업사원 관리 시스템</title>
+<title>네오래빗 본사 관리 (관리자 전용)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -37,6 +37,10 @@ function sendNeoAdminNotification(title, body) {
 const SHARED_LOGIN_ID = "neorabbit";
 const SHARED_AUTH_EMAIL = "neorabbit@neo-rabbit.app";
 
+/** 현장 HTML과 로그인 세션을 나눔(탭별 SESSION + 다른 화면이면 로그아웃). */
+const NEO_AUTH_SURFACE_KEY = "neo_auth_surface";
+const NEO_AUTH_SURFACE_HQ = "hq";
+
 // Firestore 규칙 isAdmin() 과 동일 (회사 도메인 또는 profiles.role === "admin" 또는 공용 계정)
 const ADMIN_EMAIL_DOMAIN = "@unsat.co.kr";
 
@@ -66,7 +70,29 @@ function mapAuthError(e) {
   if (c === "auth/wrong-password" || c === "auth/invalid-credential") return "이메일 또는 비밀번호를 확인해 주세요.";
   if (c === "auth/too-many-requests") return "시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
   if (c === "auth/network-request-failed") return "네트워크를 확인해 주세요.";
+  if (c === "auth/unauthorized-continue-uri") return "메일 링크 주소가 Firebase에 허용되지 않았습니다. Authentication → 설정 → 승인된 도메인에 배포 URL을 추가하거나, firebase-config.js 에 window.__NEO_EMAIL_CONTINUE_URL__ 을 https 주소로 넣으세요.";
   return (e && e.message) || String(e);
+}
+
+function neoAuthActionCodeSettings() {
+  const cfg = window.__NEO_FIREBASE_CONFIG__ || {};
+  const custom = window.__NEO_EMAIL_CONTINUE_URL__;
+  if (typeof custom === "string") {
+    const t = custom.trim();
+    if (t.indexOf("https://") === 0 || t.indexOf("http://") === 0) return { url: t.split("#")[0], handleCodeInApp: false };
+  }
+  if (typeof window !== "undefined" && window.location && (window.location.protocol === "https:" || window.location.protocol === "http:")) {
+    return { url: (window.location.origin + window.location.pathname + window.location.search).split("#")[0], handleCodeInApp: false };
+  }
+  const pid = cfg.projectId;
+  if (typeof pid === "string" && pid && String(pid).indexOf("YOUR_") !== 0) {
+    return { url: "https://" + pid + ".web.app/본사_영업관리.html", handleCodeInApp: false };
+  }
+  const domain = cfg.authDomain;
+  if (typeof domain === "string" && domain && String(domain).indexOf("YOUR_") !== 0 && domain.indexOf(".") > 0) {
+    return { url: "https://" + domain + "/", handleCodeInApp: false };
+  }
+  return undefined;
 }
 
 function AdminLoginGate() {
@@ -90,7 +116,25 @@ function AdminLoginGate() {
     setConfigError("");
     if (!firebase.apps.length) firebase.initializeApp(cfg);
     if (typeof window.neoActivateAppCheckIfConfigured === "function") window.neoActivateAppCheckIfConfigured();
-    return firebase.auth().onAuthStateChanged(setUser);
+    let unsub = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.SESSION);
+        const prev = sessionStorage.getItem(NEO_AUTH_SURFACE_KEY);
+        if (prev && prev !== NEO_AUTH_SURFACE_HQ) await firebase.auth().signOut();
+        if (!cancelled) sessionStorage.setItem(NEO_AUTH_SURFACE_KEY, NEO_AUTH_SURFACE_HQ);
+      } catch (e) {
+        console.warn("[Neo] auth persistence:", e);
+      }
+      if (cancelled) return;
+      firebase.auth().languageCode = "ko";
+      unsub = firebase.auth().onAuthStateChanged(setUser);
+    })();
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
   }, []);
 
   useEffect(() => {
@@ -159,7 +203,9 @@ function AdminLoginGate() {
       return;
     }
     try {
-      await firebase.auth().sendPasswordResetEmail(em);
+      const acs = neoAuthActionCodeSettings();
+      if (acs) await firebase.auth().sendPasswordResetEmail(em, acs);
+      else await firebase.auth().sendPasswordResetEmail(em);
       setInfoMsg("비밀번호 재설정 링크를 메일로 보냈습니다. 받은편지함(스팸함 포함)을 확인해 주세요.");
     } catch (err) {
       setAuthErr(mapAuthError(err));
@@ -188,10 +234,16 @@ function AdminLoginGate() {
     return (
       <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ width: "100%", maxWidth: 400, background: "#fff", borderRadius: 20, padding: "32px 28px", boxShadow: "0 4px 24px rgba(0,0,0,0.08)" }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: "#1A1A2E", marginBottom: 6 }}>NeoRabbit 관리자</div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#B45309", letterSpacing: 0.02, marginBottom: 8, textTransform: "uppercase" }}>본사 · 관리자 전용</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#1A1A2E", marginBottom: 6 }}>네오래빗 본사 관리</div>
+          <div style={{
+            fontSize: 12, color: "#92400E", lineHeight: 1.55, marginBottom: 16, padding: "12px 14px", background: "#FFFBEB", borderRadius: 12, border: "1px solid #FCD34D",
+          }}>
+            <b>현장 영업사원</b>이시면 이 파일이 아니라 <b>현장_영업사원.html</b> 을 여세요. 여기는 입점·사원 통계를 보는 <b>본사 콘솔</b>입니다.
+          </div>
           <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 22, lineHeight: 1.5 }}>
-            {authMode === "login" && ("공용: 아이디 " + SHARED_LOGIN_ID + " / 비밀번호는 관리자가 설정한 값. 그 외는 이메일로 로그인.")}
-            {authMode === "signup" && "회원가입 후, " + ADMIN_EMAIL_DOMAIN + " 이거나 Firestore profiles에 role admin이면 접속 가능합니다."}
+            {authMode === "login" && ("로그인: 공용 아이디 " + SHARED_LOGIN_ID + " + 비밀번호, 또는 본사 이메일 계정.")}
+            {authMode === "signup" && ("「관리자 회원가입」만 해당합니다. 가입 후 " + ADMIN_EMAIL_DOMAIN + " 이거나 Firestore profiles에 role admin 이어야 이 화면에 들어올 수 있습니다. 영업사원 가입은 현장_영업사원.html 에서 하세요.")}
             {authMode === "forgotId" && "아이디(로그인 ID) 안내"}
             {authMode === "forgotPw" && "가입 시 이메일로 재설정 링크를 보냅니다."}
           </p>
@@ -224,14 +276,14 @@ function AdminLoginGate() {
               {authErr ? <div style={{ color: "#DC2626", fontSize: 13, marginBottom: 12 }}>{authErr}</div> : null}
               {infoMsg ? <div style={{ color: "#059669", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{infoMsg}</div> : null}
               <button type="submit" style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 15, background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff", marginBottom: 14 }}>
-                {authMode === "login" ? "로그인" : authMode === "signup" ? "회원가입" : "재설정 메일 보내기"}
+                {authMode === "login" ? "로그인" : authMode === "signup" ? "관리자 회원가입" : "재설정 메일 보내기"}
               </button>
             </form>
           )}
 
           {authMode === "login" && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: "12px 16px", justifyContent: "center", marginTop: 8 }}>
-              <button type="button" style={linkBtn} onClick={() => { setAuthMode("signup"); setAuthErr(""); setInfoMsg(""); }}>회원가입</button>
+              <button type="button" style={linkBtn} onClick={() => { setAuthMode("signup"); setAuthErr(""); setInfoMsg(""); }}>관리자 회원가입</button>
               <button type="button" style={linkBtn} onClick={() => { setAuthMode("forgotId"); setAuthErr(""); setInfoMsg(""); }}>아이디 찾기</button>
               <button type="button" style={linkBtn} onClick={() => { setAuthMode("forgotPw"); setAuthErr(""); setInfoMsg(""); }}>비밀번호 찾기</button>
             </div>
@@ -260,6 +312,9 @@ function AdminLoginGate() {
         <div style={{ color: "#DC2626", fontWeight: 800, fontSize: 16 }}>접근 권한이 없습니다</div>
         <p style={{ color: "#6B7280", fontSize: 14, textAlign: "center", maxWidth: 400, lineHeight: 1.6 }}>
           관리자는 공용 아이디 <b>{SHARED_LOGIN_ID}</b>, 또는 <b>{ADMIN_EMAIL_DOMAIN}</b> 이메일, 또는 Firestore <b>profiles</b>에 <code>role: admin</code>인 경우에만 이용할 수 있습니다.
+        </p>
+        <p style={{ color: "#028090", fontSize: 13, textAlign: "center", maxWidth: 440, lineHeight: 1.55, padding: "10px 14px", background: "#ECFEFF", borderRadius: 12, border: "1px solid #99F6E4" }}>
+          <b>현장 영업사원</b>으로 가입·로그인한 계정입니다. 매장 방문·일지는 <b>현장_영업사원.html</b> 을 여세요. 이 페이지는 본사 관리자 전용입니다.
         </p>
         <button type="button" onClick={() => firebase.auth().signOut()} style={{ padding: "10px 22px", borderRadius: 10, border: "1px solid #E5E7EB", cursor: "pointer", background: "#fff", fontWeight: 600 }}>다른 계정으로 로그인</button>
       </div>
@@ -315,35 +370,22 @@ const initialVisitsSeed = [
   { name: "PT 짐", address: "용인시 기흥구 구갈동 55", date: "2026-04-10", result: "fail", note: "관심 없다고 거절" },
 ];
 
-const initialRegions = ["용인", "동탄", "수원"];
+const initialRegions = ["용인"];
 
+/** 빈 DB 최초 접속 시에만 채워짐. 영업사원 1명(담당 ID 1) + 샘플 입점·방문. */
 const initialSalesReps = [
-  { id: 1, name: "김민수", region: "용인", phone: "010-1234-5678", joinDate: "2026-04-01", status: "active",
+  {
+    id: 1,
+    name: "김민수",
+    region: "용인",
+    phone: "010-1234-5678",
+    joinDate: "2026-04-01",
+    status: "active",
     stores: [
       { name: "카페 블루", type: "카페", date: "2026-04-03", activated: true },
       { name: "맛있는 분식", type: "음식점", date: "2026-04-04", activated: true },
       { name: "헤어살롱 미미", type: "미용실", date: "2026-04-05", activated: false },
-      { name: "동네 세탁소", type: "세탁소", date: "2026-04-07", activated: true },
-      { name: "피자 용인점", type: "음식점", date: "2026-04-08", activated: false },
-    ]
-  },
-  { id: 2, name: "이서연", region: "동탄", phone: "010-2345-6789", joinDate: "2026-04-02", status: "active",
-    stores: [
-      { name: "카페 동탄점", type: "카페", date: "2026-04-03", activated: true },
-      { name: "네일아트 뷰티", type: "뷰티", date: "2026-04-05", activated: true },
-      { name: "동탄 치킨", type: "음식점", date: "2026-04-06", activated: true },
-    ]
-  },
-  { id: 3, name: "박준혁", region: "수원", phone: "010-3456-7890", joinDate: "2026-04-03", status: "active",
-    stores: [
-      { name: "수원 통닭", type: "음식점", date: "2026-04-04", activated: true },
-      { name: "럭키 헬스장", type: "헬스장", date: "2026-04-06", activated: false },
-      { name: "아름다운 꽃집", type: "기타", date: "2026-04-07", activated: true },
-      { name: "버거 수원점", type: "음식점", date: "2026-04-08", activated: true },
-      { name: "세븐 카페", type: "카페", date: "2026-04-09", activated: false },
-      { name: "미소 네일", type: "뷰티", date: "2026-04-09", activated: true },
-      { name: "수원 빨래방", type: "세탁소", date: "2026-04-10", activated: false },
-    ]
+    ],
   },
 ];
 
@@ -899,8 +941,8 @@ function Dashboard() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17 }}>🐰</div>
           <div>
-            <div style={{ color: "#fff", fontSize: 17, fontWeight: 800, letterSpacing: -0.5 }}>NeoRabbit Admin</div>
-            <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 11 }}>영업사원 관리 시스템</div>
+            <div style={{ color: "#fff", fontSize: 17, fontWeight: 800, letterSpacing: -0.5 }}>네오래빗 본사 관리</div>
+            <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 11 }}>관리자 전용 · 영업사원 앱(현장_영업사원.html)과 다름</div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>

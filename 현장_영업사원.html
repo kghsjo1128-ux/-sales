@@ -127,6 +127,18 @@ const SHARED_LOGIN_ID = "neorabbit";
 const SHARED_AUTH_EMAIL = "neorabbit@neo-rabbit.app";
 const SHARED_DEFAULT_REP_ID = "1";
 
+/** 본사 HTML과 로그인 세션을 나눔(탭별 SESSION + 다른 화면이면 로그아웃). */
+const NEO_AUTH_SURFACE_KEY = "neo_auth_surface";
+const NEO_AUTH_SURFACE_FIELD = "field";
+
+function sendNeoRepAdminChatNotification(body) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  try {
+    const b = body && String(body).trim() ? String(body).trim() : "새 메시지가 도착했습니다.";
+    new Notification("관리자 메시지", { body: b.length > 200 ? b.slice(0, 197) + "…" : b, tag: "neo-rep-admin-chat", requireInteraction: false });
+  } catch (e) { /* ignore */ }
+}
+
 function announceVersionFromDoc(d) {
   if (!d || d.version == null) return 0;
   return typeof d.version === "number" ? d.version : parseInt(d.version, 10) || 0;
@@ -144,6 +156,10 @@ function isSharedNeoRabbitUser(user) {
   return !!(user && user.email && user.email.toLowerCase() === SHARED_AUTH_EMAIL.toLowerCase());
 }
 
+function looksLikeEmail(s) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
+}
+
 function mapAuthError(e) {
   const c = e && e.code;
   if (c === "auth/email-already-in-use") return "이미 가입된 이메일입니다.";
@@ -153,7 +169,41 @@ function mapAuthError(e) {
   if (c === "auth/wrong-password" || c === "auth/invalid-credential") return "이메일 또는 비밀번호를 확인해 주세요.";
   if (c === "auth/too-many-requests") return "시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
   if (c === "auth/network-request-failed") return "네트워크를 확인해 주세요.";
+  if (c === "auth/unauthorized-continue-uri") return "인증 메일 링크 주소가 Firebase에 허용되지 않았습니다. 콘솔 → Authentication → 설정 → 승인된 도메인에 배포 URL을 추가하거나, firebase-config.js 에 window.__NEO_EMAIL_CONTINUE_URL__ = \"https://…/현장_영업사원.html\" 을 넣으세요.";
   return (e && e.message) || String(e);
+}
+
+/**
+ * 인증·비밀번호 메일의 continue URL (승인된 도메인만 허용).
+ * 우선순위: firebase-config.js 지정 → 현재 https 페이지 → 기본 Hosting URL → authDomain 루트.
+ */
+function neoAuthActionCodeSettings() {
+  const cfg = window.__NEO_FIREBASE_CONFIG__ || {};
+  const custom = window.__NEO_EMAIL_CONTINUE_URL__;
+  if (typeof custom === "string") {
+    const t = custom.trim();
+    if (t.indexOf("https://") === 0 || t.indexOf("http://") === 0) return { url: t.split("#")[0], handleCodeInApp: false };
+  }
+  if (typeof window !== "undefined" && window.location && (window.location.protocol === "https:" || window.location.protocol === "http:")) {
+    return { url: (window.location.origin + window.location.pathname + window.location.search).split("#")[0], handleCodeInApp: false };
+  }
+  const pid = cfg.projectId;
+  if (typeof pid === "string" && pid && String(pid).indexOf("YOUR_") !== 0) {
+    return { url: "https://" + pid + ".web.app/현장_영업사원.html", handleCodeInApp: false };
+  }
+  const domain = cfg.authDomain;
+  if (typeof domain === "string" && domain && String(domain).indexOf("YOUR_") !== 0 && domain.indexOf(".") > 0) {
+    return { url: "https://" + domain + "/", handleCodeInApp: false };
+  }
+  return undefined;
+}
+
+async function neoSendUserEmailVerification(user) {
+  if (!user || typeof user.sendEmailVerification !== "function") return;
+  firebase.auth().languageCode = "ko";
+  const acs = neoAuthActionCodeSettings();
+  if (acs) await user.sendEmailVerification(acs);
+  else await user.sendEmailVerification();
 }
 
 function ScreenshotGuard({ children }) {
@@ -323,6 +373,58 @@ function RepChatMobile({ repId }) {
   );
 }
 
+function EmailVerifyGate({ user, onReload }) {
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const sendAgain = async () => {
+    setBusy(true);
+    setMsg("");
+    try {
+      await neoSendUserEmailVerification(user);
+      setMsg("인증 메일을 다시 보냈습니다. 스팸함도 확인해 주세요.");
+    } catch (e) {
+      setMsg(mapAuthError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{
+      minHeight: "100dvh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center",
+      padding: "max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left))",
+      boxSizing: "border-box",
+    }}>
+      <div className="neo-app-shell" style={{ width: "100%", maxWidth: "100%", background: "#fff", borderRadius: 20, padding: "26px 22px", boxShadow: "0 4px 24px rgba(0,0,0,0.08)", boxSizing: "border-box" }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E", marginBottom: 10 }}>이메일 인증이 필요합니다</div>
+        <p style={{ fontSize: 14, color: "#374151", lineHeight: 1.65, marginBottom: 14 }}>
+          가입하신 주소(<b>{user.email || ""}</b>)로 <b>한글 인증 메일</b>을 보냈습니다. 메일 속 링크를 눌러 인증을 완료한 뒤 아래 <b>인증 완료, 새로고침</b>을 눌러 주세요.
+        </p>
+        <p style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5, marginBottom: 10 }}>
+          Firebase 콘솔 → Authentication → 설정 → 사용자 작업 이메일에서 본문을 한글로 바꿀 수 있습니다. 앱에서는 발송 언어를 한국어로 요청합니다.
+        </p>
+        {typeof window !== "undefined" && window.location && window.location.protocol === "file:" ? (
+          <div style={{ fontSize: 12, color: "#92400E", lineHeight: 1.55, marginBottom: 18, padding: "10px 12px", background: "#FFFBEB", borderRadius: 12, border: "1px solid #FCD34D" }}>
+            <b>로컬 파일(file://)로 연 경우</b> 인증 메일이 오지 않거나 링크가 동작하지 않을 수 있습니다. <b>Firebase Hosting 등으로 https 배포</b>한 뒤 그 주소로 열거나, <code style={{ fontSize: 11 }}>firebase-config.js</code> 에 배포된 현장 페이지의 <b>https 전체 URL</b>을 <code style={{ fontSize: 11 }}>window.__NEO_EMAIL_CONTINUE_URL__</code> 로 지정하세요. 콘솔 → Authentication → <b>승인된 도메인</b>에 해당 호스트를 등록해야 합니다.
+          </div>
+        ) : (
+          <p style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5, marginBottom: 18 }}>메일이 안 오면 스팸함·차단 설정을 확인하고, 잠시 뒤 「인증 메일 다시 보내기」를 눌러 보세요.</p>
+        )}
+        {msg ? <div style={{ fontSize: 13, color: msg.indexOf("다시 보냈") >= 0 ? "#059669" : "#DC2626", marginBottom: 12, lineHeight: 1.5 }}>{msg}</div> : null}
+        <button type="button" disabled={busy} onClick={sendAgain} style={{
+          width: "100%", padding: 14, borderRadius: 12, border: "none", cursor: busy ? "wait" : "pointer", fontWeight: 700, fontSize: 15,
+          background: busy ? "#D1D5DB" : "linear-gradient(135deg, #028090, #00A896)", color: "#fff", marginBottom: 10,
+        }}>{busy ? "보내는 중…" : "인증 메일 다시 보내기"}</button>
+        <button type="button" onClick={onReload} style={{
+          width: "100%", padding: 12, borderRadius: 12, border: "1px solid #028090", cursor: "pointer", fontWeight: 700, fontSize: 14, background: "#fff", color: "#028090", marginBottom: 10,
+        }}>인증 완료 — 새로고침</button>
+        <button type="button" onClick={() => firebase.auth().signOut()} style={{
+          width: "100%", padding: 12, borderRadius: 10, border: "1px solid #E5E7EB", cursor: "pointer", background: "#F9FAFB", fontWeight: 600, color: "#374151",
+        }}>로그아웃</button>
+      </div>
+    </div>
+  );
+}
+
 function RepLoginGate() {
   const [user, setUser] = useState(undefined);
   const [profile, setProfile] = useState(undefined);
@@ -333,6 +435,7 @@ function RepLoginGate() {
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
+  const [emailVerifiedOk, setEmailVerifiedOk] = useState(null);
   const [joinName, setJoinName] = useState("");
   const [joinPhone, setJoinPhone] = useState("");
   const [joinRegion, setJoinRegion] = useState("");
@@ -350,8 +453,45 @@ function RepLoginGate() {
     setConfigError("");
     if (!firebase.apps.length) firebase.initializeApp(cfg);
     if (typeof window.neoActivateAppCheckIfConfigured === "function") window.neoActivateAppCheckIfConfigured();
-    return firebase.auth().onAuthStateChanged(setUser);
+    let unsub = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.SESSION);
+        const prev = sessionStorage.getItem(NEO_AUTH_SURFACE_KEY);
+        if (prev && prev !== NEO_AUTH_SURFACE_FIELD) await firebase.auth().signOut();
+        if (!cancelled) sessionStorage.setItem(NEO_AUTH_SURFACE_KEY, NEO_AUTH_SURFACE_FIELD);
+      } catch (e) {
+        console.warn("[Neo] auth persistence:", e);
+      }
+      if (cancelled) return;
+      firebase.auth().languageCode = "ko";
+      unsub = firebase.auth().onAuthStateChanged(setUser);
+    })();
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setEmailVerifiedOk(null);
+      return undefined;
+    }
+    if (isSharedNeoRabbitUser(user)) {
+      setEmailVerifiedOk(true);
+      return undefined;
+    }
+    let cancelled = false;
+    setEmailVerifiedOk(null);
+    user.reload().then(() => {
+      if (!cancelled) setEmailVerifiedOk(!!user.emailVerified);
+    }).catch(() => {
+      if (!cancelled) setEmailVerifiedOk(false);
+    });
+    return () => { cancelled = true; };
+  }, [user]);
 
   useEffect(() => {
     if (!user) {
@@ -359,6 +499,10 @@ function RepLoginGate() {
       return undefined;
     }
     if (isSharedNeoRabbitUser(user)) {
+      return undefined;
+    }
+    if (emailVerifiedOk !== true) {
+      setProfile(undefined);
       return undefined;
     }
     setProfile(undefined);
@@ -371,7 +515,7 @@ function RepLoginGate() {
       }
     );
     return () => unsub();
-  }, [user]);
+  }, [user, emailVerifiedOk]);
 
   const doLogin = async e => {
     e.preventDefault();
@@ -388,9 +532,14 @@ function RepLoginGate() {
     e.preventDefault();
     setAuthErr("");
     setInfoMsg("");
-    const authEmail = loginIdToAuthEmail(email);
-    if (authEmail === SHARED_AUTH_EMAIL) {
-      setAuthErr("공용 아이디 " + SHARED_LOGIN_ID + " 는 회원가입 없이 로그인만 사용하세요.");
+    const raw = email.trim();
+    if (!looksLikeEmail(raw)) {
+      setAuthErr("영업사원 회원가입은 이메일 주소만 사용할 수 있습니다. (예: hong@example.com)");
+      return;
+    }
+    const authEmail = raw.toLowerCase();
+    if (authEmail === SHARED_AUTH_EMAIL.toLowerCase()) {
+      setAuthErr("관리자용 " + SHARED_LOGIN_ID + " 는 회원가입이 아니라 로그인에서만 사용하세요.");
       return;
     }
     if (password.length < 6) {
@@ -402,7 +551,12 @@ function RepLoginGate() {
       return;
     }
     try {
-      await firebase.auth().createUserWithEmailAndPassword(authEmail, password);
+      firebase.auth().languageCode = "ko";
+      const cred = await firebase.auth().createUserWithEmailAndPassword(authEmail, password);
+      await neoSendUserEmailVerification(cred.user);
+      setInfoMsg("입력하신 메일로 인증 링크를 보냈습니다. 메일을 연 뒤 본문의 링크를 눌러 인증을 마친 다음, 아래 「인증 완료」를 누르거나 로그아웃 후 다시 로그인하세요. 메일 제목·본문 한글은 Firebase 콘솔 → Authentication → 템플릿에서 수정할 수 있습니다.");
+      setPassword("");
+      setPassword2("");
     } catch (err) {
       setAuthErr(mapAuthError(err));
     }
@@ -418,7 +572,9 @@ function RepLoginGate() {
       return;
     }
     try {
-      await firebase.auth().sendPasswordResetEmail(em);
+      const acs = neoAuthActionCodeSettings();
+      if (acs) await firebase.auth().sendPasswordResetEmail(em, acs);
+      else await firebase.auth().sendPasswordResetEmail(em);
       setInfoMsg("비밀번호 재설정 링크를 메일로 보냈습니다. 받은편지함(스팸함 포함)을 확인해 주세요.");
     } catch (err) {
       setAuthErr(mapAuthError(err));
@@ -464,10 +620,14 @@ function RepLoginGate() {
           <div style={{ fontSize: 22, fontWeight: 800, color: "#1A1A2E", marginBottom: 4 }}>네오래빗</div>
           <div style={{ fontSize: 12, color: "#028090", fontWeight: 700, marginBottom: 10 }}>영업사원 어드민</div>
           <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 18, lineHeight: 1.5 }}>
-            {authMode === "login" && ("공용: 아이디 " + SHARED_LOGIN_ID + " (rep " + SHARED_DEFAULT_REP_ID + "). 비밀번호는 관리자가 안내한 값. 그 외는 이메일 + 프로필 등록.")}
-            {authMode === "signup" && "회원가입 후 관리자에게 프로필 등록을 요청하세요."}
+            {authMode === "login" && (
+              <React.Fragment>
+                <b>관리자</b>는 아이디 <b>{SHARED_LOGIN_ID}</b> 와 비밀번호만 입력하세요. <b>영업사원</b>은 가입한 <b>이메일</b> 과 비밀번호로 로그인하세요. (이메일 인증 완료 후)
+              </React.Fragment>
+            )}
+            {authMode === "signup" && "영업사원은 이메일로만 가입합니다. 인증 메일의 링크를 누른 뒤 이 앱에서 로그인하세요. 이후 관리자 승인 또는 프로필 등록이 필요합니다."}
             {authMode === "forgotId" && "로그인 아이디 안내"}
-            {authMode === "forgotPw" && "이메일로 재설정 링크를 보냅니다."}
+            {authMode === "forgotPw" && "가입 시 사용한 이메일로 재설정 링크를 보냅니다."}
           </p>
 
           {authMode === "forgotId" && (
@@ -480,8 +640,8 @@ function RepLoginGate() {
           {(authMode === "login" || authMode === "signup" || authMode === "forgotPw") && (
             <form onSubmit={authMode === "login" ? doLogin : authMode === "signup" ? doSignup : doResetPassword}>
               <div style={{ marginBottom: 12 }}>
-                <label style={lb}>아이디 또는 이메일</label>
-                <input type="text" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} style={inStyle} placeholder={SHARED_LOGIN_ID + " 또는 email@example.com"} required />
+                <label style={lb}>{authMode === "signup" ? "이메일 (회원가입)" : "이메일"}</label>
+                <input type={authMode === "signup" || authMode === "forgotPw" ? "email" : "text"} autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} style={inStyle} placeholder={authMode === "signup" ? "예: hong@company.com" : authMode === "forgotPw" ? "가입 시 사용한 이메일" : "이메일 또는 " + SHARED_LOGIN_ID} required />
               </div>
               {authMode !== "forgotPw" && (
                 <div style={{ marginBottom: 12 }}>
@@ -518,6 +678,24 @@ function RepLoginGate() {
           )}
         </div>
       </div>
+    );
+  }
+  if (user && !isSharedNeoRabbitUser(user) && emailVerifiedOk === null) {
+    return (
+      <div style={{ minHeight: "100dvh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 14, color: "#6B7280" }}>계정 확인 중…</div>
+      </div>
+    );
+  }
+  if (user && !isSharedNeoRabbitUser(user) && emailVerifiedOk === false) {
+    return (
+      <EmailVerifyGate
+        user={user}
+        onReload={async () => {
+          await user.reload();
+          setEmailVerifiedOk(!!user.emailVerified);
+        }}
+      />
     );
   }
   if (isSharedNeoRabbitUser(user)) {
@@ -600,6 +778,8 @@ function RepLoginGate() {
 
 function App({ repId, onSignOut }) {
   const [tab, setTab] = useState("home");
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
   const [stores, setStores] = useState([]);
   const [visits, setVisits] = useState([]);
   const [loadState, setLoadState] = useState({ loading: true, error: "" });
@@ -623,6 +803,39 @@ function App({ repId, onSignOut }) {
     const id = setInterval(() => setHeaderNow(new Date()), 30000);
     return () => clearInterval(id);
   }, []);
+
+  /** 관리자가 채팅을내면(다른 탭·다른 화면일 때) 브라우저 알림. 채팅 탭을 보는 중이면 생략. */
+  useEffect(() => {
+    if (!repId) return undefined;
+    const db = firebase.firestore();
+    const latestIdRef = { current: null };
+    const q = db.collection("chats").doc(String(repId)).collection("messages").orderBy("createdAt", "desc").limit(1);
+    const maybeNotify = d => {
+      if (d.from !== "admin") return;
+      const visible = typeof document !== "undefined" && document.visibilityState === "visible";
+      if (visible && tabRef.current === "chat") return;
+      sendNeoRepAdminChatNotification(d.text);
+    };
+    const unsub = q.onSnapshot(snap => {
+      if (!snap || snap.empty) {
+        if (latestIdRef.current === null) latestIdRef.current = "__empty__";
+        return;
+      }
+      const doc = snap.docs[0];
+      const id = doc.id;
+      const d = doc.data() || {};
+      const prev = latestIdRef.current;
+      latestIdRef.current = id;
+      if (prev === null) return;
+      if (prev === "__empty__") {
+        maybeNotify(d);
+        return;
+      }
+      if (prev === id) return;
+      maybeNotify(d);
+    }, err => console.error(err));
+    return () => unsub();
+  }, [repId]);
 
   useEffect(() => {
     const cfg = window.__NEO_FIREBASE_CONFIG__;
@@ -1223,8 +1436,26 @@ function App({ repId, onSignOut }) {
       {/* ===== CHAT ===== */}
       {tab === "chat" && (
         <div style={NEO_SECTION_PAD}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E", marginBottom: 8 }}>관리자와 메시지</div>
-          <p style={{ fontSize: 12, color: "#6B7280", marginBottom: 16, lineHeight: 1.5 }}>본사(관리자)와 실시간으로 문자를 주고받을 수 있습니다.</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>관리자와 메시지</div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (typeof Notification === "undefined") {
+                  alert("이 브라우저는 알림을 지원하지 않습니다.");
+                  return;
+                }
+                const r = await Notification.requestPermission();
+                if (r === "granted") alert("알림이 켜졌습니다. 다른 메뉴를 보고 있거나 탭을 바꿔도 관리자 메시지가 오면 알림이 뜹니다.");
+                else if (r === "denied") alert("알림이 거절되었습니다. 브라우저 설정에서 이 사이트의 알림을 허용해 주세요.");
+              }}
+              style={{
+                padding: "8px 12px", borderRadius: 10, border: "1px solid #99F6E4", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                background: "#ECFEFF", color: "#0F766E", flexShrink: 0,
+              }}
+            >🔔 알림 받기</button>
+          </div>
+          <p style={{ fontSize: 12, color: "#6B7280", marginBottom: 16, lineHeight: 1.5 }}>본사(관리자)와 실시간으로 문자를 주고받을 수 있습니다. 위 버튼으로 알림을 켜 두면 관리자가 보낸 메시지를 놓치지 않기 쉽습니다.</p>
           <RepChatMobile repId={repId} />
         </div>
       )}
@@ -1301,7 +1532,7 @@ function App({ repId, onSignOut }) {
       <Modal open={showAddStore} onClose={() => setShowAddStore(false)} title="업체 입점 등록">
         <Input label="업체명" value={newStore.name} onChange={v => setNewStore(p => ({ ...p, name: v }))} placeholder="카페 이름, 음식점 이름 등" />
         <Select label="업종" value={newStore.type} onChange={v => setNewStore(p => ({ ...p, type: v }))} options={STORE_TYPES} />
-        <Input label="주소 (선택)" value={newStore.address} onChange={v => setNewStore(p => ({ ...p, address: v }))} placeholder="매장 주소" />
+        <Input label="매장 주소" value={newStore.address} onChange={v => setNewStore(p => ({ ...p, address: v }))} placeholder="매장 주소" />
         <Input label="메모 (선택)" value={newStore.note} onChange={v => setNewStore(p => ({ ...p, note: v }))} placeholder="특이사항, 사장님 반응 등" multiline />
         <Btn onClick={handleAddStore} disabled={!newStore.name || !newStore.type}>입점 등록하기</Btn>
       </Modal>
@@ -1309,7 +1540,7 @@ function App({ repId, onSignOut }) {
       {/* Add Visit Modal */}
       <Modal open={showAddVisit} onClose={() => { setShowAddVisit(false); setEditingVisitId(null); setVisitFormMode("add"); }} title={visitFormMode === "edit" ? "방문 기록 수정" : "방문 기록"}>
         <Input label="업체명" value={newVisit.name} onChange={v => setNewVisit(p => ({ ...p, name: v }))} placeholder="방문한 매장 이름" />
-        <Input label="주소 (선택)" value={newVisit.address} onChange={v => setNewVisit(p => ({ ...p, address: v }))} placeholder="매장 주소" />
+        <Input label="매장 주소" value={newVisit.address} onChange={v => setNewVisit(p => ({ ...p, address: v }))} placeholder="매장 주소" />
         <Input label="방문일" value={newVisit.date} onChange={v => setNewVisit(p => ({ ...p, date: v }))} type="date" />
         <div style={{ marginBottom: 14 }}>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>방문 결과</label>
