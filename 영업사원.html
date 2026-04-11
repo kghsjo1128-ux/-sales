@@ -452,6 +452,77 @@ function PrimaryButton({ children, onClick, disabled, full }) {
   );
 }
 
+function RepChatPanel({ repId, isAdmin }) {
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const bottomRef = useRef(null);
+  useEffect(() => {
+    const db = firebase.firestore();
+    const unsub = db.collection("chats").doc(String(repId)).collection("messages")
+      .orderBy("createdAt", "asc").limit(200)
+      .onSnapshot(snap => setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() }))), err => console.error(err));
+    return () => unsub();
+  }, [repId]);
+  useEffect(() => {
+    bottomRef.current && bottomRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+  const send = async () => {
+    const t = text.trim();
+    if (!t || sending) return;
+    setSending(true);
+    try {
+      const db = firebase.firestore();
+      await db.collection("chats").doc(String(repId)).collection("messages").add({
+        from: isAdmin ? "admin" : "rep",
+        text: t,
+        createdAt: new Date().toISOString(),
+      });
+      setText("");
+    } catch (e) {
+      alert("전송 실패: " + ((e && e.message) || e));
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden", background: "#F8FAFB" }}>
+      <div style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: "#1A1A2E", background: "#fff", borderBottom: "1px solid #E5E7EB" }}>실시간 메시지 (담당 ID {repId})</div>
+      <div style={{ height: 280, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        {messages.length === 0 ? (
+          <div style={{ fontSize: 13, color: "#9CA3AF", textAlign: "center", padding: 24 }}>대화가 없습니다. 아래에서 메시지를 보내세요.</div>
+        ) : (
+          messages.map(m => {
+            const mine = (isAdmin && m.from === "admin") || (!isAdmin && m.from === "rep");
+            return (
+              <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "85%" }}>
+                <div style={{
+                  fontSize: 10, color: "#9CA3AF", marginBottom: 2, paddingLeft: mine ? 0 : 4, paddingRight: mine ? 4 : 0, textAlign: mine ? "right" : "left",
+                }}>{m.from === "admin" ? "관리자" : "사원"} · {(m.createdAt || "").slice(5, 16)}</div>
+                <div style={{
+                  padding: "8px 12px", borderRadius: 12, fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  background: mine ? "linear-gradient(135deg, #028090, #00A896)" : "#fff",
+                  color: mine ? "#fff" : "#374151",
+                  border: mine ? "none" : "1px solid #E5E7EB",
+                }}>{m.text}</div>
+              </div>
+            );
+          })
+        )}
+        <div ref={bottomRef} />
+      </div>
+      <div style={{ display: "flex", gap: 8, padding: 10, background: "#fff", borderTop: "1px solid #E5E7EB" }}>
+        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          placeholder="메시지 입력…" style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #E5E7EB", fontSize: 14 }} />
+        <button type="button" onClick={send} disabled={sending || !text.trim()} style={{
+          padding: "0 18px", borderRadius: 10, border: "none", cursor: sending || !text.trim() ? "not-allowed" : "pointer",
+          fontWeight: 700, fontSize: 13, background: sending || !text.trim() ? "#D1D5DB" : "#028090", color: "#fff",
+        }}>전송</button>
+      </div>
+    </div>
+  );
+}
+
 function Dashboard() {
   const [repRows, setRepRows] = useState([]);
   const [storeRows, setStoreRows] = useState([]);
@@ -465,6 +536,11 @@ function Dashboard() {
   const [showAddRegion, setShowAddRegion] = useState(false);
   const [showDeleteRepModal, setShowDeleteRepModal] = useState(false);
   const [repPendingDelete, setRepPendingDelete] = useState(null);
+  const [joinRequests, setJoinRequests] = useState([]);
+  const [showAnnounceModal, setShowAnnounceModal] = useState(false);
+  const [announceTitle, setAnnounceTitle] = useState("");
+  const [announceBody, setAnnounceBody] = useState("");
+  const [announceSaving, setAnnounceSaving] = useState(false);
   const [notifBanner, setNotifBanner] = useState("");
   const [notifEnabled, setNotifEnabled] = useState(() => {
     try {
@@ -507,7 +583,7 @@ function Dashboard() {
       setLoadState({ loading: false, error: "neo 폴더의 firebase-config.js에 Firebase 웹 앱 설정값을 넣어주세요." });
       return;
     }
-    let unsubReps, unsubStores, unsubVisits, unsubSettings;
+    let unsubReps, unsubStores, unsubVisits, unsubSettings, unsubJoinRequests;
     (async () => {
       try {
         if (!firebase.apps.length) firebase.initializeApp(cfg);
@@ -527,6 +603,10 @@ function Dashboard() {
         unsubVisits = db.collection("visits").onSnapshot(snap => {
           setVisitRows(snap.docs.map(d => ({ id: d.id, ...d.data() })));
         });
+        unsubJoinRequests = db.collection("rep_join_requests").where("status", "==", "pending").onSnapshot(
+          snap => setJoinRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+          err => console.error(err)
+        );
         setLoadState({ loading: false, error: "" });
       } catch (e) {
         console.error(e);
@@ -538,6 +618,7 @@ function Dashboard() {
       if (unsubStores) unsubStores();
       if (unsubVisits) unsubVisits();
       if (unsubSettings) unsubSettings();
+      if (unsubJoinRequests) unsubJoinRequests();
     };
   }, []);
 
@@ -689,6 +770,80 @@ function Dashboard() {
     }
   };
 
+  const handleApproveJoin = async req => {
+    const uid = String(req.id);
+    if (!window.confirm("이 요청을 승인하고 영업사원 문서·프로필을 자동 생성할까요?")) return;
+    try {
+      const db = firebase.firestore();
+      const profSnap = await db.collection("profiles").doc(uid).get();
+      if (profSnap.exists && profSnap.data().role === "rep" && profSnap.data().repId) {
+        alert("이미 영업사원 프로필이 있습니다. Firestore에서 확인해 주세요.");
+        return;
+      }
+      const repRef = db.collection("reps").doc();
+      const batch = db.batch();
+      batch.set(repRef, {
+        name: req.name,
+        region: req.region,
+        phone: req.phone,
+        joinDate: new Date().toISOString().slice(0, 10),
+        status: "active",
+      });
+      batch.set(db.collection("profiles").doc(uid), { role: "rep", repId: repRef.id }, { merge: true });
+      batch.update(db.collection("rep_join_requests").doc(uid), {
+        status: "approved",
+        approvedRepId: repRef.id,
+        approvedAt: new Date().toISOString(),
+      });
+      await batch.commit();
+    } catch (e) {
+      alert("승인 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const handleRejectJoin = async req => {
+    const uid = String(req.id);
+    if (!window.confirm("이 가입 요청을 거절할까요?")) return;
+    try {
+      await firebase.firestore().collection("rep_join_requests").doc(uid).update({
+        status: "rejected",
+        rejectedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      alert("처리 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const publishRepAnnouncement = async () => {
+    const title = announceTitle.trim();
+    const body = announceBody.trim();
+    if (!title || !body) {
+      alert("제목과 내용을 모두 입력해 주세요.");
+      return;
+    }
+    setAnnounceSaving(true);
+    try {
+      const db = firebase.firestore();
+      const ref = db.collection("settings").doc("rep_announcement");
+      const snap = await ref.get();
+      const prev = snap.exists && typeof snap.data().version === "number" ? snap.data().version : 0;
+      await ref.set({
+        title,
+        body,
+        version: prev + 1,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      setShowAnnounceModal(false);
+      setAnnounceTitle("");
+      setAnnounceBody("");
+      alert("영업사원 앱에 새 공지가 반영되었습니다.");
+    } catch (e) {
+      alert("저장 실패: " + ((e && e.message) || e));
+    } finally {
+      setAnnounceSaving(false);
+    }
+  };
+
   const commitDeleteRep = async () => {
     if (!repPendingDelete) return;
     const rid = String(repPendingDelete.id);
@@ -748,14 +903,18 @@ function Dashboard() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          {["dashboard", "reps", "regions"].map(v => (
+          {["dashboard", "reps", "regions", "requests"].map(v => (
             <button key={v} onClick={() => { setView(v); setSelectedRep(null); }} style={{
               padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, transition: "all 0.2s",
               background: view === v ? "#fff" : "rgba(255,255,255,0.15)", color: view === v ? "#028090" : "#fff",
             }}>
-              {v === "dashboard" ? "대시보드" : v === "reps" ? "영업사원" : "지역 관리"}
+              {v === "dashboard" ? "대시보드" : v === "reps" ? "영업사원" : v === "regions" ? "지역 관리" : "가입 요청" + (joinRequests.length ? " (" + joinRequests.length + ")" : "")}
             </button>
           ))}
+          <button type="button" onClick={() => setShowAnnounceModal(true)} style={{
+            padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 12, fontWeight: 600,
+            background: "rgba(0,0,0,0.08)", color: "#fff",
+          }}>공지 작성</button>
           <button type="button" onClick={enableBrowserNotifications} style={{
             padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 12, fontWeight: 600,
             background: notifEnabled ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.08)", color: "#fff",
@@ -965,7 +1124,48 @@ function Dashboard() {
                 </tbody>
               </table>
             )}
+            <div style={{ marginTop: 22 }}>
+              <RepChatPanel repId={selectedRep.id} isAdmin={true} />
+            </div>
           </div>
+        </React.Fragment>)}
+
+        {/* JOIN REQUESTS */}
+        {view === "requests" && (<React.Fragment>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#1A1A2E" }}>영업사원 앱 가입 요청</h2>
+            <p style={{ margin: 0, fontSize: 12, color: "#6B7280", maxWidth: 480, lineHeight: 1.5 }}>앱에서 정보를 제출한 사용자입니다. 승인 시 reps 문서와 해당 UID의 profiles가 자동 생성됩니다.</p>
+          </div>
+          {joinRequests.length === 0 ? (
+            <div style={{ background: "#fff", borderRadius: 16, padding: 48, textAlign: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", color: "#9CA3AF", fontSize: 14 }}>대기 중인 요청이 없습니다</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {joinRequests.map(req => (
+                <div key={req.id} style={{
+                  background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+                  borderLeft: "4px solid #F59E0B", display: "flex", flexWrap: "wrap", gap: 14, justifyContent: "space-between", alignItems: "flex-start",
+                }}>
+                  <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: "#1A1A2E", marginBottom: 6 }}>{req.name}</div>
+                    <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>
+                      <div>연락처: {req.phone}</div>
+                      <div>지역: {req.region}</div>
+                      <div>이메일: {req.email || "—"}</div>
+                      <div style={{ marginTop: 8, fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#9CA3AF", wordBreak: "break-all" }}>Auth UID: {req.id}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                    <button type="button" onClick={() => handleApproveJoin(req)} style={{
+                      padding: "10px 18px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff",
+                    }}>승인</button>
+                    <button type="button" onClick={() => handleRejectJoin(req)} style={{
+                      padding: "10px 18px", borderRadius: 10, border: "1px solid #FECACA", cursor: "pointer", fontWeight: 700, fontSize: 13, background: "#FEF2F2", color: "#DC2626",
+                    }}>거절</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </React.Fragment>)}
 
         {/* REGION MANAGEMENT */}
@@ -1028,6 +1228,20 @@ function Dashboard() {
           <div style={{ fontSize: 12, color: "#DC2626", marginTop: -8, marginBottom: 12 }}>이미 등록된 지역입니다</div>
         )}
         <div style={{ marginTop: 8 }}><PrimaryButton onClick={handleAddRegion} disabled={!newRegion.trim() || regions.includes(newRegion.trim())} full>추가하기</PrimaryButton></div>
+      </Modal>
+
+      <Modal open={showAnnounceModal} onClose={() => { if (!announceSaving) { setShowAnnounceModal(false); setAnnounceTitle(""); setAnnounceBody(""); } }} title="영업사원 앱 공지">
+        <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 16, lineHeight: 1.5 }}>저장하면 영업사원 앱에 팝업으로 표시되며, 사원이 확인하면 다시 보지 않을 수 있습니다.</p>
+        <InputField label="제목" value={announceTitle} onChange={setAnnounceTitle} placeholder="예: 4월 정산 일정 안내" />
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>내용</label>
+          <textarea value={announceBody} onChange={e => setAnnounceBody(e.target.value)} placeholder="공지 본문" rows={6}
+            style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 14, boxSizing: "border-box", background: "#FAFAFA", resize: "vertical" }} />
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button type="button" disabled={announceSaving} onClick={() => { setShowAnnounceModal(false); setAnnounceTitle(""); setAnnounceBody(""); }} style={{ padding: "10px 18px", borderRadius: 10, border: "1px solid #E5E7EB", background: "#fff", cursor: announceSaving ? "not-allowed" : "pointer", fontWeight: 600 }}>취소</button>
+          <PrimaryButton onClick={publishRepAnnouncement} disabled={announceSaving || !announceTitle.trim() || !announceBody.trim()}>발송</PrimaryButton>
+        </div>
       </Modal>
 
       <Modal open={showDeleteRepModal} onClose={() => { setShowDeleteRepModal(false); setRepPendingDelete(null); }} title="영업사원 삭제">

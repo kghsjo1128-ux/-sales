@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
 <title>네오래빗 - 영업사원 어드민</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -14,12 +14,37 @@
 <script src="firebase-config.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F8FAFB; max-width: 480px; margin: 0 auto; min-height: 100vh; }
+html {
+  -webkit-text-size-adjust: 100%;
+  height: 100%;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #F8FAFB;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  min-height: 100%;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+  overflow-x: hidden;
+}
+#root {
+  width: 100%;
+  max-width: 100%;
+  min-height: 100%;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+}
 button { font-family: inherit; }
 input, select, textarea { font-family: inherit; }
 /* 웹에서는 OS·하드웨어 캡처를 완전히 막을 수 없음. 복사·우클릭·일부 단축키·인쇄 시 내용 숨김으로 완화 */
 .neo-capture-guard {
-  min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  min-height: 100%;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -34,18 +59,78 @@ input, select, textarea { font-family: inherit; }
   .neo-capture-guard, .neo-capture-guard * { visibility: hidden !important; }
   body::after { content: ""; display: block; }
 }
+/* 폰·태블릿·데스크톱: 본문 폭 자동 제한 */
+.neo-app-shell {
+  width: 100%;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
+@media (min-width: 480px) {
+  .neo-app-shell { max-width: 440px; }
+}
+@media (min-width: 640px) {
+  .neo-app-shell { max-width: 560px; }
+}
+@media (min-width: 900px) {
+  .neo-app-shell { max-width: 720px; }
+}
+@media (min-width: 1200px) {
+  .neo-app-shell { max-width: 880px; }
+}
+@media (min-width: 720px) {
+  .neo-stat-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+}
+.neo-nav-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: #fff;
+  border-top: 1px solid #E5E7EB;
+  box-sizing: border-box;
+}
+@media (min-width: 640px) {
+  .neo-modal-out {
+    align-items: center !important;
+    justify-content: center !important;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)) !important;
+  }
+  .neo-modal-in {
+    border-radius: 20px !important;
+    max-width: min(520px, calc(100vw - 32px)) !important;
+    max-height: min(88vh, 100dvh - 32px) !important;
+  }
+}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const STORE_TYPES = ["카페", "음식점", "미용실", "뷰티", "세탁소", "헬스장", "편의점", "기타"];
+
+/** 휴대폰 노치·라운드 코너 대응 + 전 기종 가로폭 100% */
+const NEO_SECTION_PAD = {
+  paddingTop: 20,
+  paddingBottom: 20,
+  paddingLeft: "max(16px, env(safe-area-inset-left, 0px))",
+  paddingRight: "max(16px, env(safe-area-inset-right, 0px))",
+};
 
 const SHARED_LOGIN_ID = "neorabbit";
 const SHARED_AUTH_EMAIL = "neorabbit@neo-rabbit.app";
 const SHARED_DEFAULT_REP_ID = "1";
+
+function announceVersionFromDoc(d) {
+  if (!d || d.version == null) return 0;
+  return typeof d.version === "number" ? d.version : parseInt(d.version, 10) || 0;
+}
 
 function loginIdToAuthEmail(raw) {
   const s = (raw || "").trim();
@@ -111,10 +196,15 @@ function Badge({ children, color }) {
 function Modal({ open, onClose, title, children }) {
   if (!open) return null;
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{
-        background: "#fff", borderRadius: "20px 20px 0 0", padding: "24px 20px 32px", width: "100%", maxWidth: 480,
-        maxHeight: "85vh", overflowY: "auto", boxShadow: "0 -10px 40px rgba(0,0,0,0.12)",
+    <div className="neo-modal-out" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+      <div className="neo-modal-in" onClick={e => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: "20px 20px 0 0",
+        paddingTop: 24,
+        paddingBottom: "max(32px, env(safe-area-inset-bottom, 0px))",
+        paddingLeft: "max(20px, env(safe-area-inset-left, 0px))",
+        paddingRight: "max(20px, env(safe-area-inset-right, 0px))",
+        width: "100%", maxWidth: "100%",
+        maxHeight: "min(85vh, 100dvh)", overflowY: "auto", boxShadow: "0 -10px 40px rgba(0,0,0,0.12)",
       }}>
         <div style={{ width: 36, height: 4, borderRadius: 2, background: "#D1D5DB", margin: "0 auto 16px" }} />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -128,7 +218,7 @@ function Modal({ open, onClose, title, children }) {
 }
 
 function Input({ label, value, onChange, placeholder, type, multiline }) {
-  const style = { width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 14, outline: "none", background: "#FAFAFA", boxSizing: "border-box", resize: "none" };
+  const style = { width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 16, outline: "none", background: "#FAFAFA", boxSizing: "border-box", resize: "none" };
   return (
     <div style={{ marginBottom: 14 }}>
       <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>{label}</label>
@@ -147,7 +237,7 @@ function Select({ label, value, onChange, options }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>{label}</label>
-      <select value={value} onChange={e => onChange(e.target.value)} style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 14, outline: "none", background: "#FAFAFA", boxSizing: "border-box", cursor: "pointer" }}>
+      <select value={value} onChange={e => onChange(e.target.value)} style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 16, outline: "none", background: "#FAFAFA", boxSizing: "border-box", cursor: "pointer" }}>
         <option value="">선택</option>
         {options.map(o => <option key={o} value={o}>{o}</option>)}
       </select>
@@ -161,8 +251,75 @@ function Btn({ children, onClick, disabled, color }) {
   return (
     <button onClick={onClick} disabled={disabled} style={{
       padding: "12px 24px", borderRadius: 12, border: "none", cursor: disabled ? "not-allowed" : "pointer",
-      fontSize: 14, fontWeight: 700, width: "100%", background: disabled ? "#D1D5DB" : bg, color: txt, opacity: disabled ? 0.5 : 1,
+      fontSize: 16, fontWeight: 700, width: "100%", background: disabled ? "#D1D5DB" : bg, color: txt, opacity: disabled ? 0.5 : 1,
     }}>{children}</button>
+  );
+}
+
+function RepChatMobile({ repId }) {
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const bottomRef = useRef(null);
+  useEffect(() => {
+    const db = firebase.firestore();
+    const unsub = db.collection("chats").doc(String(repId)).collection("messages")
+      .orderBy("createdAt", "asc").limit(200)
+      .onSnapshot(snap => setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() }))), err => console.error(err));
+    return () => unsub();
+  }, [repId]);
+  useEffect(() => {
+    bottomRef.current && bottomRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+  const send = async () => {
+    const t = text.trim();
+    if (!t || sending) return;
+    setSending(true);
+    try {
+      await firebase.firestore().collection("chats").doc(String(repId)).collection("messages").add({
+        from: "rep",
+        text: t,
+        createdAt: new Date().toISOString(),
+      });
+      setText("");
+    } catch (e) {
+      alert("전송 실패: " + ((e && e.message) || e));
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "clamp(280px, calc(100dvh - 240px), 620px)", minHeight: 260, maxHeight: 620 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "4px 0 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {messages.length === 0 ? (
+          <div style={{ textAlign: "center", color: "#9CA3AF", fontSize: 13, padding: 32 }}>관리자와 대화를 시작해 보세요.</div>
+        ) : (
+          messages.map(m => {
+            const mine = m.from === "rep";
+            return (
+              <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "88%" }}>
+                <div style={{ fontSize: 9, color: "#9CA3AF", marginBottom: 2, textAlign: mine ? "right" : "left" }}>{m.from === "admin" ? "관리자" : "나"}</div>
+                <div style={{
+                  padding: "10px 14px", borderRadius: 14, fontSize: 14, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  background: mine ? "linear-gradient(135deg, #028090, #00A896)" : "#fff",
+                  color: mine ? "#fff" : "#374151",
+                  border: mine ? "none" : "1px solid #E5E7EB",
+                  boxShadow: mine ? "none" : "0 1px 2px rgba(0,0,0,0.04)",
+                }}>{m.text}</div>
+              </div>
+            );
+          })
+        )}
+        <div ref={bottomRef} />
+      </div>
+      <div style={{ display: "flex", gap: 8, paddingTop: 10, borderTop: "1px solid #E5E7EB" }}>
+        <input value={text} onChange={e => setText(e.target.value)} placeholder="메시지…" style={{ flex: 1, padding: "12px 14px", borderRadius: 12, border: "1.5px solid #E5E7EB", fontSize: 15 }} />
+        <button type="button" onClick={send} disabled={sending || !text.trim()} style={{
+          padding: "0 18px", borderRadius: 12, border: "none", fontWeight: 700, fontSize: 14,
+          background: !text.trim() || sending ? "#D1D5DB" : "#028090", color: "#fff", cursor: !text.trim() || sending ? "not-allowed" : "pointer",
+        }}>전송</button>
+      </div>
+    </div>
   );
 }
 
@@ -176,6 +333,12 @@ function RepLoginGate() {
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
+  const [joinName, setJoinName] = useState("");
+  const [joinPhone, setJoinPhone] = useState("");
+  const [joinRegion, setJoinRegion] = useState("");
+  const [joinSubmitting, setJoinSubmitting] = useState(false);
+  const [joinDone, setJoinDone] = useState(false);
+  const [joinErr, setJoinErr] = useState("");
 
   useEffect(() => {
     const cfg = window.__NEO_FIREBASE_CONFIG__;
@@ -262,28 +425,42 @@ function RepLoginGate() {
     }
   };
 
-  const inStyle = { width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 14, boxSizing: "border-box", background: "#FAFAFA" };
+  const inStyle = { width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 16, boxSizing: "border-box", background: "#FAFAFA" };
   const lb = { display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 6 };
   const linkBtn = { background: "none", border: "none", cursor: "pointer", color: "#028090", fontSize: 13, fontWeight: 600, textDecoration: "underline", padding: 0 };
 
   if (configError) {
     return (
-      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <div style={{ color: "#DC2626", textAlign: "center", maxWidth: 400, lineHeight: 1.6, fontSize: 14 }}>{configError}</div>
+      <div style={{
+        minHeight: "100dvh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center",
+        paddingTop: "max(20px, env(safe-area-inset-top, 0px))",
+        paddingBottom: "max(20px, env(safe-area-inset-bottom, 0px))",
+        paddingLeft: "max(20px, env(safe-area-inset-left, 0px))",
+        paddingRight: "max(20px, env(safe-area-inset-right, 0px))",
+        boxSizing: "border-box",
+      }}>
+        <div style={{ color: "#DC2626", textAlign: "center", maxWidth: "100%", lineHeight: 1.6, fontSize: 14 }}>{configError}</div>
       </div>
     );
   }
   if (user === undefined) {
     return (
-      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minHeight: "100dvh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ fontSize: 14, color: "#6B7280" }}>로그인 확인 중…</div>
       </div>
     );
   }
   if (!user) {
     return (
-      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <div style={{ width: "100%", maxWidth: 400, background: "#fff", borderRadius: 20, padding: "28px 22px", boxShadow: "0 4px 24px rgba(0,0,0,0.08)", margin: "0 auto" }}>
+      <div style={{
+        minHeight: "100dvh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center",
+        paddingTop: "max(16px, env(safe-area-inset-top, 0px))",
+        paddingBottom: "max(16px, env(safe-area-inset-bottom, 0px))",
+        paddingLeft: "max(16px, env(safe-area-inset-left, 0px))",
+        paddingRight: "max(16px, env(safe-area-inset-right, 0px))",
+        boxSizing: "border-box",
+      }}>
+        <div className="neo-app-shell" style={{ width: "100%", maxWidth: "100%", background: "#fff", borderRadius: 20, padding: "28px 22px", boxShadow: "0 4px 24px rgba(0,0,0,0.08)", margin: "0 auto", boxSizing: "border-box" }}>
           <div style={{ fontSize: 22, fontWeight: 800, color: "#1A1A2E", marginBottom: 4 }}>네오래빗</div>
           <div style={{ fontSize: 12, color: "#028090", fontWeight: 700, marginBottom: 10 }}>영업사원 어드민</div>
           <p style={{ fontSize: 13, color: "#6B7280", marginBottom: 18, lineHeight: 1.5 }}>
@@ -320,7 +497,7 @@ function RepLoginGate() {
               )}
               {authErr ? <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 10 }}>{authErr}</div> : null}
               {infoMsg ? <div style={{ color: "#059669", fontSize: 12, marginBottom: 10, lineHeight: 1.5 }}>{infoMsg}</div> : null}
-              <button type="submit" style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14, background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff", marginBottom: 12 }}>
+              <button type="submit" style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 16, background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff", marginBottom: 12 }}>
                 {authMode === "login" ? "로그인" : authMode === "signup" ? "회원가입" : "재설정 메일 보내기"}
               </button>
             </form>
@@ -352,18 +529,64 @@ function RepLoginGate() {
   }
   if (profile === undefined) {
     return (
-      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ minHeight: "100dvh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, boxSizing: "border-box" }}>
         <div style={{ fontSize: 14, color: "#6B7280" }}>프로필 확인 중…</div>
       </div>
     );
   }
   if (profile === null || profile.role !== "rep" || profile.repId == null || String(profile.repId).trim() === "") {
+    const submitJoin = async () => {
+      setJoinErr("");
+      if (!joinName.trim() || !joinPhone.trim() || !joinRegion.trim()) {
+        setJoinErr("이름·연락처·활동 지역을 모두 입력해 주세요.");
+        return;
+      }
+      setJoinSubmitting(true);
+      try {
+        const db = firebase.firestore();
+        await db.collection("rep_join_requests").doc(user.uid).set({
+          name: joinName.trim(),
+          phone: joinPhone.trim(),
+          region: joinRegion.trim(),
+          email: (user.email || "").trim(),
+          createdAt: new Date().toISOString(),
+          status: "pending",
+        }, { merge: true });
+        setJoinDone(true);
+      } catch (e) {
+        setJoinErr((e && e.message) || String(e));
+      } finally {
+        setJoinSubmitting(false);
+      }
+    };
     return (
-      <div style={{ minHeight: "100vh", background: "#F8FAFB", padding: "24px 20px", maxWidth: 480, margin: "0 auto" }}>
+      <div className="neo-app-shell" style={{
+        minHeight: "100dvh", background: "#F8FAFB", width: "100%", maxWidth: "100%", margin: 0, boxSizing: "border-box",
+        paddingTop: "max(24px, env(safe-area-inset-top, 0px))",
+        paddingBottom: "max(24px, env(safe-area-inset-bottom, 0px))",
+        paddingLeft: "max(20px, env(safe-area-inset-left, 0px))",
+        paddingRight: "max(20px, env(safe-area-inset-right, 0px))",
+      }}>
         <div style={{ fontSize: 17, fontWeight: 800, color: "#1A1A2E", marginBottom: 12 }}>등록이 필요합니다</div>
-        <p style={{ fontSize: 13, color: "#6B7280", lineHeight: 1.6, marginBottom: 16 }}>관리자에게 아래 <b>사용자 ID</b>를 전달하세요. Firestore <b>profiles</b> 컬렉션에 문서 ID를 이 값으로 만들고 필드를 추가해야 합니다.</p>
-        <div style={{ background: "#fff", borderRadius: 12, padding: 14, marginBottom: 12, border: "1px solid #E5E7EB", wordBreak: "break-all", fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{user.uid}</div>
-        <p style={{ fontSize: 12, color: "#374151", lineHeight: 1.6, marginBottom: 16 }}>필드 예: <b>role</b> <code>rep</code>, <b>repId</b> <code>1</code> (관리자 화면 「담당 ID」와 동일, 문자열로 입력)</p>
+        <p style={{ fontSize: 13, color: "#6B7280", lineHeight: 1.6, marginBottom: 12 }}>아래에서 <b>가입 요청</b>을 내면 관리자 화면에 동일하게 표시되며, 승인 후 앱이 바로 열립니다. (기존 방식으로 관리자가 직접 profiles를 넣어도 됩니다.)</p>
+        <div style={{ background: "#fff", borderRadius: 12, padding: 14, marginBottom: 14, border: "1px solid #E5E7EB", wordBreak: "break-all", fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#6B7280" }}>사용자 ID (UID)<br /><span style={{ color: "#1A1A2E", fontSize: 12 }}>{user.uid}</span></div>
+
+        {joinDone ? (
+          <div style={{ background: "#ECFDF5", borderRadius: 12, padding: 16, marginBottom: 14, border: "1px solid #A7F3D0", fontSize: 14, color: "#065F46", lineHeight: 1.6 }}>
+            요청이 접수되었습니다. 관리자 승인 후 이 화면이 자동으로 넘어갑니다. 잠시 후 아래를 눌러 새로고침 해 보세요.
+          </div>
+        ) : (
+          <div style={{ background: "#fff", borderRadius: 14, padding: 16, marginBottom: 14, border: "1px solid #E5E7EB", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E", marginBottom: 12 }}>가입 요청 보내기</div>
+            <Input label="이름" value={joinName} onChange={setJoinName} placeholder="실명" />
+            <Input label="연락처" value={joinPhone} onChange={setJoinPhone} placeholder="010-0000-0000" type="tel" />
+            <Input label="활동 지역" value={joinRegion} onChange={setJoinRegion} placeholder="예: 용인, 동탄" />
+            {joinErr ? <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 10 }}>{joinErr}</div> : null}
+            <Btn onClick={submitJoin} disabled={joinSubmitting}>{joinSubmitting ? "전송 중…" : "요청 보내기"}</Btn>
+          </div>
+        )}
+
+        <p style={{ fontSize: 11, color: "#9CA3AF", lineHeight: 1.5, marginBottom: 12 }}>수동 등록: Firestore <b>profiles</b> 문서 ID = 위 UID, 필드 <b>role</b> rep, <b>repId</b> = 관리자 「담당 ID」</p>
         <button type="button" onClick={() => firebase.auth().signOut()} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid #E5E7EB", cursor: "pointer", background: "#fff", fontWeight: 600 }}>로그아웃</button>
       </div>
     );
@@ -386,7 +609,20 @@ function App({ repId, onSignOut }) {
   const [storeFilter, setStoreFilter] = useState("all");
 
   const [newStore, setNewStore] = useState({ name: "", type: "", address: "", note: "" });
-  const [newVisit, setNewVisit] = useState({ name: "", address: "", result: "", note: "" });
+  const [newVisit, setNewVisit] = useState({ name: "", address: "", result: "", note: "", date: "" });
+  const [visitFormMode, setVisitFormMode] = useState("add");
+  const [editingVisitId, setEditingVisitId] = useState(null);
+  const [storeSelectionMode, setStoreSelectionMode] = useState(false);
+  const [selectedStoreIds, setSelectedStoreIds] = useState([]);
+  const [announceDoc, setAnnounceDoc] = useState(null);
+  const [showAnnouncePopup, setShowAnnouncePopup] = useState(false);
+  const [showAnnounceRead, setShowAnnounceRead] = useState(false);
+  const [headerNow, setHeaderNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setHeaderNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const cfg = window.__NEO_FIREBASE_CONFIG__;
@@ -394,7 +630,7 @@ function App({ repId, onSignOut }) {
       setLoadState({ loading: false, error: "neo 폴더의 firebase-config.js에 Firebase 웹 앱 설정을 넣어주세요." });
       return;
     }
-    let unsubStores, unsubVisits;
+    let unsubStores, unsubVisits, unsubAnnounce;
     (async () => {
       try {
         if (!firebase.apps.length) firebase.initializeApp(cfg);
@@ -419,6 +655,18 @@ function App({ repId, onSignOut }) {
           rows.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
           setVisits(rows);
         }, err => console.error(err));
+        unsubAnnounce = db.collection("settings").doc("rep_announcement").onSnapshot(snap => {
+          const d = snap.exists ? snap.data() : null;
+          setAnnounceDoc(d || null);
+          if (!d || d.title == null || d.title === "") {
+            setShowAnnouncePopup(false);
+            return;
+          }
+          const ver = announceVersionFromDoc(d);
+          let seen = 0;
+          try { seen = parseInt(localStorage.getItem("neo_rep_ann_v") || "0", 10) || 0; } catch (e) { seen = 0; }
+          if (ver > seen) setShowAnnouncePopup(true);
+        }, err => console.error(err));
         setLoadState({ loading: false, error: "" });
       } catch (e) {
         console.error(e);
@@ -428,16 +676,29 @@ function App({ repId, onSignOut }) {
     return () => {
       if (unsubStores) unsubStores();
       if (unsubVisits) unsubVisits();
+      if (unsubAnnounce) unsubAnnounce();
     };
   }, [repId]);
+
+  const dismissAnnouncePopup = () => {
+    const ver = announceVersionFromDoc(announceDoc);
+    if (ver > 0) {
+      try { localStorage.setItem("neo_rep_ann_v", String(ver)); } catch (e) { /* ignore */ }
+    }
+    setShowAnnouncePopup(false);
+  };
 
   useEffect(() => {
     setShowDetail(prev => {
       if (!prev) return prev;
       const next = stores.find(s => String(s.id) === String(prev.id));
-      return next !== undefined ? next : prev;
+      return next != null ? next : null;
     });
   }, [stores]);
+
+  useEffect(() => {
+    if (!storeSelectionMode) setSelectedStoreIds([]);
+  }, [storeSelectionMode]);
 
   const activated = stores.filter(s => s.status === "activated").length;
   const pending = stores.filter(s => s.status === "pending").length;
@@ -466,22 +727,116 @@ function App({ repId, onSignOut }) {
     }
   };
 
-  const handleAddVisit = async () => {
+  const visitDateOrToday = () => {
+    const d = (newVisit.date || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    return new Date().toISOString().slice(0, 10);
+  };
+
+  const openAddVisitModal = () => {
+    setVisitFormMode("add");
+    setEditingVisitId(null);
+    setNewVisit({ name: "", address: "", result: "", note: "", date: new Date().toISOString().slice(0, 10) });
+    setShowAddVisit(true);
+  };
+
+  const openEditVisitModal = v => {
+    setVisitFormMode("edit");
+    setEditingVisitId(v.id);
+    setNewVisit({
+      name: v.name || "",
+      address: v.address || "",
+      result: v.result || "",
+      note: v.note || "",
+      date: (v.date && String(v.date).slice(0, 10)) || new Date().toISOString().slice(0, 10),
+    });
+    setShowAddVisit(true);
+  };
+
+  const handleSaveVisit = async () => {
     if (!newVisit.name || !newVisit.result) return;
+    const dateStr = visitDateOrToday();
     try {
       const db = firebase.firestore();
-      await db.collection("visits").add({
-        repId,
-        name: newVisit.name,
-        address: newVisit.address || "",
-        date: new Date().toISOString().slice(0, 10),
-        result: newVisit.result,
-        note: newVisit.note || "",
-      });
-      setNewVisit({ name: "", address: "", result: "", note: "" });
+      if (visitFormMode === "edit" && editingVisitId) {
+        await db.collection("visits").doc(String(editingVisitId)).update({
+          name: newVisit.name,
+          address: newVisit.address || "",
+          date: dateStr,
+          result: newVisit.result,
+          note: newVisit.note || "",
+        });
+      } else {
+        await db.collection("visits").add({
+          repId,
+          name: newVisit.name,
+          address: newVisit.address || "",
+          date: dateStr,
+          result: newVisit.result,
+          note: newVisit.note || "",
+        });
+      }
+      setNewVisit({ name: "", address: "", result: "", note: "", date: "" });
+      setEditingVisitId(null);
+      setVisitFormMode("add");
       setShowAddVisit(false);
     } catch (e) {
       alert("저장 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const handleDeleteVisit = async v => {
+    if (!window.confirm("이 방문 기록을 삭제할까요?")) return;
+    try {
+      await firebase.firestore().collection("visits").doc(String(v.id)).delete();
+    } catch (e) {
+      alert("삭제 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const toggleStoreSelected = id => {
+    const sid = String(id);
+    setSelectedStoreIds(prev => (prev.indexOf(sid) >= 0 ? prev.filter(x => x !== sid) : prev.concat(sid)));
+  };
+
+  const selectAllFilteredStores = () => {
+    setSelectedStoreIds(filteredStores.map(s => String(s.id)));
+  };
+
+  const bulkSetStoresActivated = async activated => {
+    if (selectedStoreIds.length === 0) return;
+    if (!window.confirm("선택한 " + selectedStoreIds.length + "곳을 " + (activated ? "활성화" : "미활성화") + "할까요?")) return;
+    try {
+      const db = firebase.firestore();
+      await Promise.all(selectedStoreIds.map(id => db.collection("stores").doc(id).update({ activated })));
+      setSelectedStoreIds([]);
+      setStoreSelectionMode(false);
+    } catch (e) {
+      alert("처리 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const bulkDeleteStores = async () => {
+    if (selectedStoreIds.length === 0) return;
+    if (!window.confirm("선택한 " + selectedStoreIds.length + "곳을 영구 삭제할까요? 되돌릴 수 없습니다.")) return;
+    try {
+      const db = firebase.firestore();
+      await Promise.all(selectedStoreIds.map(id => db.collection("stores").doc(id).delete()));
+      setShowDetail(d => (d && selectedStoreIds.indexOf(String(d.id)) >= 0 ? null : d));
+      setSelectedStoreIds([]);
+      setStoreSelectionMode(false);
+    } catch (e) {
+      alert("삭제 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const handleDeleteStore = async id => {
+    if (!window.confirm("이 업체를 삭제할까요? 되돌릴 수 없습니다.")) return;
+    try {
+      await firebase.firestore().collection("stores").doc(String(id)).delete();
+      setShowDetail(d => (d && String(d.id) === String(id) ? null : d));
+    } catch (e) {
+      alert("삭제 실패: " + ((e && e.message) || e));
     }
   };
 
@@ -499,15 +854,22 @@ function App({ repId, onSignOut }) {
 
   if (loadState.loading) {
     return (
-      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ minHeight: "100dvh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ fontSize: 14, color: "#6B7280" }}>연결 중…</div>
       </div>
     );
   }
   if (loadState.error) {
     return (
-      <div style={{ minHeight: "100vh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-        <div style={{ color: "#DC2626", textAlign: "center", maxWidth: 400, lineHeight: 1.6, fontSize: 14 }}>{loadState.error}</div>
+      <div style={{
+        minHeight: "100dvh", background: "#F8FAFB", display: "flex", alignItems: "center", justifyContent: "center",
+        paddingTop: "max(20px, env(safe-area-inset-top, 0px))",
+        paddingBottom: "max(20px, env(safe-area-inset-bottom, 0px))",
+        paddingLeft: "max(20px, env(safe-area-inset-left, 0px))",
+        paddingRight: "max(20px, env(safe-area-inset-right, 0px))",
+        boxSizing: "border-box",
+      }}>
+        <div style={{ color: "#DC2626", textAlign: "center", maxWidth: "100%", lineHeight: 1.6, fontSize: 14 }}>{loadState.error}</div>
       </div>
     );
   }
@@ -516,14 +878,56 @@ function App({ repId, onSignOut }) {
     { id: "home", icon: "🏠", label: "홈" },
     { id: "stores", icon: "🏪", label: "내 업체" },
     { id: "visits", icon: "📋", label: "방문 기록" },
+    { id: "chat", icon: "💬", label: "메시지" },
     { id: "guide", icon: "📖", label: "가이드" },
   ];
 
   return (
-    <div style={{ minHeight: "100vh", paddingBottom: 70, background: "#F8FAFB" }}>
+    <div className="neo-app-shell" style={{
+      minHeight: "100dvh",
+      width: "100%",
+      maxWidth: "100%",
+      paddingBottom: "calc(70px + max(0px, env(safe-area-inset-bottom, 0px)))",
+      background: "#F8FAFB",
+      boxSizing: "border-box",
+    }}>
+
+      {showAnnouncePopup && announceDoc && announceDoc.title && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px))",
+          boxSizing: "border-box",
+        }}>
+          <div style={{ background: "#fff", borderRadius: 18, padding: 22, maxWidth: 400, width: "100%", boxShadow: "0 20px 50px rgba(0,0,0,0.2)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#028090", marginBottom: 8 }}>공지사항</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E", marginBottom: 12 }}>{announceDoc.title}</div>
+            <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.65, whiteSpace: "pre-wrap", maxHeight: "min(50vh, 320px)", overflowY: "auto", marginBottom: 18 }}>{announceDoc.body || ""}</div>
+            <Btn onClick={dismissAnnouncePopup}>확인했습니다</Btn>
+          </div>
+        </div>
+      )}
+
+      <Modal open={showAnnounceRead} onClose={() => setShowAnnounceRead(false)} title="공지사항">
+        {announceDoc && announceDoc.title ? (
+          <React.Fragment>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#1A1A2E", marginBottom: 10 }}>{announceDoc.title}</div>
+            <div style={{ fontSize: 14, color: "#374151", lineHeight: 1.65, whiteSpace: "pre-wrap", marginBottom: 16 }}>{announceDoc.body || ""}</div>
+            <Btn color="gray" onClick={() => setShowAnnounceRead(false)}>닫기</Btn>
+          </React.Fragment>
+        ) : (
+          <div style={{ fontSize: 14, color: "#9CA3AF" }}>등록된 공지가 없습니다.</div>
+        )}
+      </Modal>
 
       {/* Header */}
-      <div style={{ background: "linear-gradient(135deg, #028090, #00A896)", padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{
+        background: "linear-gradient(135deg, #028090, #00A896)",
+        paddingTop: "max(16px, env(safe-area-inset-top, 0px))",
+        paddingBottom: 16,
+        paddingLeft: "max(20px, env(safe-area-inset-left, 0px))",
+        paddingRight: "max(20px, env(safe-area-inset-right, 0px))",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap",
+      }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 20 }}>🐰</span>
           <div>
@@ -533,22 +937,28 @@ function App({ repId, onSignOut }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
           <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 10, fontWeight: 600 }}>담당 {repId}</div>
+          {announceDoc && announceDoc.title && (
+            <button type="button" onClick={() => setShowAnnounceRead(true)} style={{
+              padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.45)", background: "rgba(255,255,255,0.15)",
+              color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
+            }}>공지</button>
+          )}
           <button type="button" onClick={onSignOut} style={{
             padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.35)", background: "rgba(0,0,0,0.1)",
             color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
           }}>나가기</button>
-          <div style={{ color: "#fff", fontSize: 12, opacity: 0.7 }}>{new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" })}</div>
+          <div style={{ color: "#fff", fontSize: 12, opacity: 0.7 }}>{headerNow.toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" })} {headerNow.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</div>
         </div>
       </div>
 
       {/* ===== HOME ===== */}
       {tab === "home" && (
-        <div style={{ padding: "20px 16px" }}>
+        <div style={NEO_SECTION_PAD}>
           <div style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E", marginBottom: 4 }}>안녕하세요! 👋</div>
           <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 20 }}>오늘도 화이팅!</div>
 
-          {/* Stats Grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+          {/* Stats Grid — 좁은 화면 2열, 넓은 화면 4열 */}
+          <div className="neo-stat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, marginBottom: 20 }}>
             {[
               { label: "총 입점", value: stores.length + "곳", icon: "🏪", color: "#1A1A2E" },
               { label: "활성화", value: activated + "곳", icon: "✅", color: "#028090" },
@@ -558,20 +968,20 @@ function App({ repId, onSignOut }) {
               <div key={i} style={{ background: "#fff", borderRadius: 14, padding: "16px 14px", boxShadow: "0 1px 4px rgba(0,0,0,0.05)", position: "relative", overflow: "hidden" }}>
                 <div style={{ position: "absolute", top: 10, right: 12, fontSize: 20, opacity: 0.1 }}>{s.icon}</div>
                 <div style={{ fontSize: 11, color: "#9CA3AF", marginBottom: 3 }}>{s.label}</div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: s.color, letterSpacing: -0.5 }}>{s.value}</div>
+                <div style={{ fontSize: "clamp(18px, 5.5vw, 24px)", fontWeight: 800, color: s.color, letterSpacing: -0.5, wordBreak: "break-all", lineHeight: 1.2 }}>{s.value}</div>
               </div>
             ))}
           </div>
 
           {/* Quick Actions */}
           <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E", marginBottom: 10 }}>빠른 실행</div>
-          <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
             <button onClick={() => setShowAddStore(true)} style={{
-              flex: 1, padding: "14px 12px", borderRadius: 14, border: "none", cursor: "pointer",
+              flex: "1 1 140px", minWidth: 0, padding: "14px 12px", borderRadius: 14, border: "none", cursor: "pointer",
               background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff", fontSize: 13, fontWeight: 700,
             }}>+ 업체 입점 등록</button>
-            <button onClick={() => setShowAddVisit(true)} style={{
-              flex: 1, padding: "14px 12px", borderRadius: 14, border: "1.5px solid #028090", cursor: "pointer",
+            <button onClick={openAddVisitModal} style={{
+              flex: "1 1 140px", minWidth: 0, padding: "14px 12px", borderRadius: 14, border: "1.5px solid #028090", cursor: "pointer",
               background: "#fff", color: "#028090", fontSize: 13, fontWeight: 700,
             }}>+ 방문 기록</button>
           </div>
@@ -601,17 +1011,43 @@ function App({ repId, onSignOut }) {
 
       {/* ===== STORES ===== */}
       {tab === "stores" && !showDetail && (
-        <div style={{ padding: "20px 16px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div style={NEO_SECTION_PAD}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>내 입점 업체</div>
-            <button onClick={() => setShowAddStore(true)} style={{
-              padding: "8px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
-              background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff",
-            }}>+ 등록</button>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => setStoreSelectionMode(m => !m)} style={{
+                padding: "8px 12px", borderRadius: 10, border: "1px solid " + (storeSelectionMode ? "#028090" : "#E5E7EB"), cursor: "pointer", fontSize: 12, fontWeight: 700,
+                background: storeSelectionMode ? "#E6FFFA" : "#fff", color: storeSelectionMode ? "#028090" : "#374151",
+              }}>{storeSelectionMode ? "선택 끄기" : "선택"}</button>
+              <button onClick={() => setShowAddStore(true)} style={{
+                padding: "8px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff",
+              }}>+ 등록</button>
+            </div>
           </div>
 
+          {storeSelectionMode && filteredStores.length > 0 && (
+            <div style={{
+              background: "#fff", borderRadius: 12, padding: "12px 14px", marginBottom: 12, border: "1px solid #E5E7EB",
+              display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center",
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#374151", marginRight: 4 }}>{selectedStoreIds.length}곳 선택</span>
+              <button type="button" onClick={selectAllFilteredStores} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#F9FAFB", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>전체 선택</button>
+              <button type="button" onClick={() => setSelectedStoreIds([])} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#F9FAFB", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>선택 해제</button>
+              <button type="button" disabled={selectedStoreIds.length === 0} onClick={() => bulkSetStoresActivated(true)} style={{
+                padding: "6px 12px", borderRadius: 8, border: "none", background: selectedStoreIds.length === 0 ? "#D1D5DB" : "#059669", color: "#fff", fontSize: 11, fontWeight: 700, cursor: selectedStoreIds.length === 0 ? "not-allowed" : "pointer",
+              }}>활성화</button>
+              <button type="button" disabled={selectedStoreIds.length === 0} onClick={() => bulkSetStoresActivated(false)} style={{
+                padding: "6px 12px", borderRadius: 8, border: "none", background: selectedStoreIds.length === 0 ? "#D1D5DB" : "#D97706", color: "#fff", fontSize: 11, fontWeight: 700, cursor: selectedStoreIds.length === 0 ? "not-allowed" : "pointer",
+              }}>미활성화</button>
+              <button type="button" disabled={selectedStoreIds.length === 0} onClick={bulkDeleteStores} style={{
+                padding: "6px 12px", borderRadius: 8, border: "none", background: selectedStoreIds.length === 0 ? "#D1D5DB" : "#DC2626", color: "#fff", fontSize: 11, fontWeight: 700, cursor: selectedStoreIds.length === 0 ? "not-allowed" : "pointer",
+              }}>삭제</button>
+            </div>
+          )}
+
           {/* Filter */}
-          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
             {[["all", "전체 " + stores.length], ["activated", "활성화 " + activated], ["pending", "미활성화 " + pending]].map(([k, l]) => (
               <button key={k} onClick={() => setStoreFilter(k)} style={{
                 padding: "6px 14px", borderRadius: 8, border: "1px solid #E5E7EB", cursor: "pointer", fontSize: 12, fontWeight: 600,
@@ -629,19 +1065,41 @@ function App({ repId, onSignOut }) {
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {filteredStores.map(s => (
-                <div key={s.id} onClick={() => setShowDetail(s)} style={{
-                  background: "#fff", borderRadius: 14, padding: "14px 16px", cursor: "pointer",
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.05)", borderLeft: "4px solid " + (s.status === "activated" ? "#028090" : "#F59E0B"),
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E" }}>{s.name}</div>
-                    <Badge color={s.status === "activated" ? "green" : "yellow"}>{s.status === "activated" ? "활성화" : "미활성화"}</Badge>
+              {filteredStores.map(s => {
+                const sid = String(s.id);
+                const checked = selectedStoreIds.indexOf(sid) >= 0;
+                return (
+                  <div key={s.id} onClick={() => {
+                    if (storeSelectionMode) toggleStoreSelected(s.id);
+                    else setShowDetail(s);
+                  }} style={{
+                    background: "#fff", borderRadius: 14, padding: "14px 16px", cursor: "pointer",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.05)", borderLeft: "4px solid " + (s.status === "activated" ? "#028090" : "#F59E0B"),
+                    display: "flex", alignItems: "flex-start", gap: 12,
+                  }}>
+                    {storeSelectionMode && (
+                      <span onClick={e => { e.stopPropagation(); toggleStoreSelected(s.id); }} style={{
+                        width: 22, height: 22, borderRadius: 6, border: "2px solid " + (checked ? "#028090" : "#D1D5DB"),
+                        background: checked ? "#028090" : "#fff", flexShrink: 0, marginTop: 2, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 800,
+                      }}>{checked ? "✓" : ""}</span>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E" }}>{s.name}</div>
+                        <Badge color={s.status === "activated" ? "green" : "yellow"}>{s.status === "activated" ? "활성화" : "미활성화"}</Badge>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#9CA3AF" }}>{s.type} · {s.date}</div>
+                      {s.address && <div style={{ fontSize: 11, color: "#B0B7C3", marginTop: 2 }}>{s.address}</div>}
+                      {s.note && (
+                        <div style={{ fontSize: 11, color: "#78716C", marginTop: 6, padding: "6px 8px", background: "#FFFBEB", borderRadius: 8, border: "1px solid #FDE68A", lineHeight: 1.4 }}>
+                          <span style={{ fontWeight: 700, color: "#B45309" }}>메모 </span>
+                          {(s.note.length > 80 ? s.note.slice(0, 80) + "…" : s.note)}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12, color: "#9CA3AF" }}>{s.type} · {s.date}</div>
-                  {s.address && <div style={{ fontSize: 11, color: "#B0B7C3", marginTop: 2 }}>{s.address}</div>}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -649,7 +1107,7 @@ function App({ repId, onSignOut }) {
 
       {/* Store Detail */}
       {tab === "stores" && showDetail && (
-        <div style={{ padding: "20px 16px" }}>
+        <div style={NEO_SECTION_PAD}>
           <button onClick={() => setShowDetail(null)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 14 }}>← 목록으로</button>
           <div style={{ background: "#fff", borderRadius: 16, padding: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -660,17 +1118,19 @@ function App({ repId, onSignOut }) {
               <Badge color={showDetail.status === "activated" ? "green" : "yellow"}>{showDetail.status === "activated" ? "활성화" : "미활성화"}</Badge>
             </div>
 
+            <div style={{ background: "#FFFBEB", borderRadius: 12, padding: 14, marginBottom: 12, border: "1px solid #FCD34D" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#B45309", marginBottom: 6 }}>📝 영업 메모 (입점 시 작성)</div>
+              {showDetail.note && String(showDetail.note).trim() !== "" ? (
+                <div style={{ fontSize: 14, color: "#78350F", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{showDetail.note}</div>
+              ) : (
+                <div style={{ fontSize: 13, color: "#A8A29E", lineHeight: 1.5 }}>등록된 메모가 없습니다. 목록에서 「+ 등록」으로 입점할 때 메모를 적으면 여기에 실시간으로 표시됩니다.</div>
+              )}
+            </div>
+
             {showDetail.address && (
               <div style={{ background: "#F8FAFB", borderRadius: 10, padding: 12, marginBottom: 12 }}>
                 <div style={{ fontSize: 11, color: "#9CA3AF", marginBottom: 2 }}>주소</div>
                 <div style={{ fontSize: 13, color: "#374151" }}>{showDetail.address}</div>
-              </div>
-            )}
-
-            {showDetail.note && (
-              <div style={{ background: "#FFF7ED", borderRadius: 10, padding: 12, marginBottom: 12 }}>
-                <div style={{ fontSize: 11, color: "#D97706", marginBottom: 2 }}>메모</div>
-                <div style={{ fontSize: 13, color: "#92400E" }}>{showDetail.note}</div>
               </div>
             )}
 
@@ -692,6 +1152,11 @@ function App({ repId, onSignOut }) {
               color: showDetail.status === "activated" ? "#DC2626" : "#fff",
             }}>{showDetail.status === "activated" ? "미활성화로 변경" : "활성화 완료 처리"}</button>
 
+            <button type="button" onClick={() => handleDeleteStore(showDetail.id)} style={{
+              width: "100%", padding: "12px", borderRadius: 12, border: "1px solid #FECACA", cursor: "pointer", fontSize: 13, fontWeight: 700,
+              background: "#FEF2F2", color: "#DC2626", marginTop: 10,
+            }}>업체 삭제</button>
+
             {showDetail.status === "pending" && (
               <div style={{ marginTop: 16, background: "#F8FAFB", borderRadius: 12, padding: 14 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E", marginBottom: 8 }}>활성화 체크리스트</div>
@@ -709,10 +1174,10 @@ function App({ repId, onSignOut }) {
 
       {/* ===== VISITS ===== */}
       {tab === "visits" && (
-        <div style={{ padding: "20px 16px" }}>
+        <div style={NEO_SECTION_PAD}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E" }}>방문 기록</div>
-            <button onClick={() => setShowAddVisit(true)} style={{
+            <button onClick={openAddVisitModal} style={{
               padding: "8px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
               background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff",
             }}>+ 기록</button>
@@ -730,9 +1195,19 @@ function App({ repId, onSignOut }) {
                 const r = rc[v.result] || rc.fail;
                 return (
                   <div key={v.id} style={{ background: "#fff", borderRadius: 14, padding: "14px 16px", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E" }}>{r.icon} {v.name}</div>
-                      <Badge color={r.color}>{r.label}</Badge>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E" }}>{r.icon} {v.name}</div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        <Badge color={r.color}>{r.label}</Badge>
+                        <button type="button" onClick={() => openEditVisitModal(v)} style={{
+                          padding: "4px 10px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#F9FAFB", fontSize: 11, fontWeight: 700, color: "#028090", cursor: "pointer",
+                        }}>수정</button>
+                        <button type="button" onClick={() => handleDeleteVisit(v)} style={{
+                          padding: "4px 10px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 700, color: "#DC2626", cursor: "pointer",
+                        }}>삭제</button>
+                      </div>
                     </div>
                     <div style={{ fontSize: 12, color: "#9CA3AF" }}>{v.date}</div>
                     {v.address && <div style={{ fontSize: 11, color: "#B0B7C3", marginTop: 2 }}>{v.address}</div>}
@@ -745,9 +1220,17 @@ function App({ repId, onSignOut }) {
         </div>
       )}
 
-      {/* ===== GUIDE ===== */}
+      {/* ===== CHAT ===== */}
+      {tab === "chat" && (
+        <div style={NEO_SECTION_PAD}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E", marginBottom: 8 }}>관리자와 메시지</div>
+          <p style={{ fontSize: 12, color: "#6B7280", marginBottom: 16, lineHeight: 1.5 }}>본사(관리자)와 실시간으로 문자를 주고받을 수 있습니다.</p>
+          <RepChatMobile repId={repId} />
+        </div>
+      )}
+
       {tab === "guide" && (
-        <div style={{ padding: "20px 16px" }}>
+        <div style={NEO_SECTION_PAD}>
           <div style={{ fontSize: 18, fontWeight: 800, color: "#1A1A2E", marginBottom: 16 }}>영업 가이드</div>
 
           {[
@@ -793,19 +1276,25 @@ function App({ repId, onSignOut }) {
       )}
 
       {/* Bottom Nav */}
-      <div style={{
-        position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480,
-        background: "#fff", borderTop: "1px solid #E5E7EB", display: "flex", justifyContent: "space-around",
-        padding: "8px 0 12px", zIndex: 100,
-      }}>
+      <div className="neo-nav-bar">
+        <div className="neo-app-shell" style={{
+          display: "flex", justifyContent: "space-around", alignItems: "center",
+          paddingTop: 8,
+          paddingBottom: "max(12px, env(safe-area-inset-bottom, 0px))",
+          paddingLeft: "max(0px, env(safe-area-inset-left, 0px))",
+          paddingRight: "max(0px, env(safe-area-inset-right, 0px))",
+          boxSizing: "border-box",
+        }}>
         {tabs.map(t => (
-          <button key={t.id} onClick={() => { setTab(t.id); setShowDetail(null); }} style={{
-            background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 12px",
+          <button key={t.id} onClick={() => { setTab(t.id); setShowDetail(null); if (t.id !== "stores") setStoreSelectionMode(false); }} style={{
+            background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+            padding: "4px clamp(2px, 1vw, 8px)", flex: "1 1 0", minWidth: 0, maxWidth: "20%",
           }}>
             <span style={{ fontSize: 20, opacity: tab === t.id ? 1 : 0.4 }}>{t.icon}</span>
             <span style={{ fontSize: 10, fontWeight: 600, color: tab === t.id ? "#028090" : "#9CA3AF" }}>{t.label}</span>
           </button>
         ))}
+        </div>
       </div>
 
       {/* Add Store Modal */}
@@ -818,15 +1307,16 @@ function App({ repId, onSignOut }) {
       </Modal>
 
       {/* Add Visit Modal */}
-      <Modal open={showAddVisit} onClose={() => setShowAddVisit(false)} title="방문 기록">
+      <Modal open={showAddVisit} onClose={() => { setShowAddVisit(false); setEditingVisitId(null); setVisitFormMode("add"); }} title={visitFormMode === "edit" ? "방문 기록 수정" : "방문 기록"}>
         <Input label="업체명" value={newVisit.name} onChange={v => setNewVisit(p => ({ ...p, name: v }))} placeholder="방문한 매장 이름" />
         <Input label="주소 (선택)" value={newVisit.address} onChange={v => setNewVisit(p => ({ ...p, address: v }))} placeholder="매장 주소" />
+        <Input label="방문일" value={newVisit.date} onChange={v => setNewVisit(p => ({ ...p, date: v }))} type="date" />
         <div style={{ marginBottom: 14 }}>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>방문 결과</label>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {[["success", "✅ 입점 성공", "#059669"], ["retry", "🔄 재방문", "#D97706"], ["fail", "❌ 거절", "#DC2626"]].map(([val, label, color]) => (
               <button key={val} onClick={() => setNewVisit(p => ({ ...p, result: val }))} style={{
-                flex: 1, padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 600,
+                flex: "1 1 90px", minWidth: 0, padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 600,
                 border: newVisit.result === val ? "2px solid " + color : "1.5px solid #E5E7EB",
                 background: newVisit.result === val ? color + "10" : "#fff", color: newVisit.result === val ? color : "#6B7280",
               }}>{label}</button>
@@ -834,7 +1324,7 @@ function App({ repId, onSignOut }) {
           </div>
         </div>
         <Input label="메모 (선택)" value={newVisit.note} onChange={v => setNewVisit(p => ({ ...p, note: v }))} placeholder="사장님 반응, 특이사항 등" multiline />
-        <Btn onClick={handleAddVisit} disabled={!newVisit.name || !newVisit.result}>기록 저장</Btn>
+        <Btn onClick={handleSaveVisit} disabled={!newVisit.name || !newVisit.result}>{visitFormMode === "edit" ? "수정 저장" : "기록 저장"}</Btn>
       </Modal>
     </div>
   );
