@@ -826,7 +826,8 @@ function Dashboard() {
       const db = firebase.firestore();
       const ref = db.collection("settings").doc("rep_announcement");
       const snap = await ref.get();
-      const prev = snap.exists && typeof snap.data().version === "number" ? snap.data().version : 0;
+      const raw = snap.exists ? snap.data().version : 0;
+      const prev = typeof raw === "number" && !Number.isNaN(raw) ? Math.floor(raw) : 0;
       await ref.set({
         title,
         body,
