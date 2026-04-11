@@ -41,6 +41,45 @@ const SHARED_AUTH_EMAIL = "neorabbit@neo-rabbit.app";
 const NEO_AUTH_SURFACE_KEY = "neo_auth_surface";
 const NEO_AUTH_SURFACE_HQ = "hq";
 
+const NEO_HQ_SAVED_LOGIN_ID_KEY = "neo_saved_login_id_hq";
+const NEO_HQ_AUTH_SESSION_START_KEY = "neo_auth_session_started_hq";
+const NEO_AUTH_SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
+
+function neoReadSavedLoginId(key) {
+  try { return localStorage.getItem(key) || ""; } catch (e) { return ""; }
+}
+function neoSaveSavedLoginId(key, rawId) {
+  try {
+    const s = String(rawId || "").trim();
+    if (s) localStorage.setItem(key, s);
+  } catch (e) { /* ignore */ }
+}
+function neoGetAuthSessionStarted(key) {
+  try {
+    const v = localStorage.getItem(key);
+    const n = v ? parseInt(v, 10) : 0;
+    return n > 0 && !isNaN(n) ? n : null;
+  } catch (e) { return null; }
+}
+function neoSetAuthSessionStarted(key) {
+  try { localStorage.setItem(key, String(Date.now())); } catch (e) {}
+}
+function neoClearAuthSessionStarted(key) {
+  try { localStorage.removeItem(key); } catch (e) {}
+}
+function neoAuthSessionExpired(key) {
+  const t = neoGetAuthSessionStarted(key);
+  if (!t) return false;
+  return Date.now() - t > NEO_AUTH_SESSION_DURATION_MS;
+}
+function neoHqSignOut() {
+  neoClearAuthSessionStarted(NEO_HQ_AUTH_SESSION_START_KEY);
+  firebase.auth().signOut();
+}
+
+/** 인증 메일·Hosting 기본 URL 등에 쓰는 스킴(http / https). */
+const NEO_PUBLIC_URL_SCHEME = "http://";
+
 // Firestore 규칙 isAdmin() 과 동일 (회사 도메인 또는 profiles.role === "admin" 또는 공용 계정)
 const ADMIN_EMAIL_DOMAIN = "@unsat.co.kr";
 
@@ -70,7 +109,7 @@ function mapAuthError(e) {
   if (c === "auth/wrong-password" || c === "auth/invalid-credential") return "이메일 또는 비밀번호를 확인해 주세요.";
   if (c === "auth/too-many-requests") return "시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
   if (c === "auth/network-request-failed") return "네트워크를 확인해 주세요.";
-  if (c === "auth/unauthorized-continue-uri") return "메일 링크 주소가 Firebase에 허용되지 않았습니다. Authentication → 설정 → 승인된 도메인에 배포 URL을 추가하거나, firebase-config.js 에 window.__NEO_EMAIL_CONTINUE_URL__ 을 https 주소로 넣으세요.";
+  if (c === "auth/unauthorized-continue-uri") return "메일 링크 주소가 Firebase에 허용되지 않았습니다. Authentication → 설정 → 승인된 도메인에 배포 URL을 추가하거나, firebase-config.js 에 window.__NEO_EMAIL_CONTINUE_URL__ 을 http(s) 주소로 넣으세요.";
   return (e && e.message) || String(e);
 }
 
@@ -86,13 +125,33 @@ function neoAuthActionCodeSettings() {
   }
   const pid = cfg.projectId;
   if (typeof pid === "string" && pid && String(pid).indexOf("YOUR_") !== 0) {
-    return { url: "https://" + pid + ".web.app/본사_영업관리.html", handleCodeInApp: false };
+    return { url: NEO_PUBLIC_URL_SCHEME + pid + ".web.app/본사_영업관리.html", handleCodeInApp: false };
   }
   const domain = cfg.authDomain;
   if (typeof domain === "string" && domain && String(domain).indexOf("YOUR_") !== 0 && domain.indexOf(".") > 0) {
-    return { url: "https://" + domain + "/", handleCodeInApp: false };
+    return { url: NEO_PUBLIC_URL_SCHEME + domain + "/", handleCodeInApp: false };
   }
   return undefined;
+}
+
+/** 영업사원 앱(현장) 안내용 공개 URL. optional: window.__NEO_FIELD_APP_URL__ (http(s) 전체 주소). */
+function getNeoFieldAppUrl() {
+  const custom = typeof window !== "undefined" && window.__NEO_FIELD_APP_URL__;
+  if (typeof custom === "string") {
+    const t = custom.trim();
+    if (t.indexOf("https://") === 0 || t.indexOf("http://") === 0) return t.split("#")[0];
+  }
+  if (typeof window !== "undefined" && window.location && (window.location.protocol === "https:" || window.location.protocol === "http:")) {
+    try {
+      return new URL("현장_영업사원.html", window.location.href).href.split("#")[0];
+    } catch (e) { /* ignore */ }
+  }
+  const cfg = window.__NEO_FIREBASE_CONFIG__ || {};
+  const pid = cfg.projectId;
+  if (typeof pid === "string" && pid && String(pid).indexOf("YOUR_") !== 0) {
+    return NEO_PUBLIC_URL_SCHEME + pid + ".web.app/현장_영업사원.html";
+  }
+  return "";
 }
 
 function AdminLoginGate() {
@@ -100,7 +159,7 @@ function AdminLoginGate() {
   const [authErr, setAuthErr] = useState("");
   const [configError, setConfigError] = useState("");
   const [authMode, setAuthMode] = useState("login");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => neoReadSavedLoginId(NEO_HQ_SAVED_LOGIN_ID_KEY));
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
@@ -158,12 +217,32 @@ function AdminLoginGate() {
     return () => unsub();
   }, [user]);
 
+  useEffect(() => {
+    if (!user) return undefined;
+    const tick = () => {
+      if (neoAuthSessionExpired(NEO_HQ_AUTH_SESSION_START_KEY)) neoHqSignOut();
+    };
+    if (neoAuthSessionExpired(NEO_HQ_AUTH_SESSION_START_KEY)) {
+      neoHqSignOut();
+      return undefined;
+    }
+    if (!neoGetAuthSessionStarted(NEO_HQ_AUTH_SESSION_START_KEY)) neoSetAuthSessionStarted(NEO_HQ_AUTH_SESSION_START_KEY);
+    const id = setInterval(tick, 60 * 1000);
+    if (typeof window !== "undefined") window.addEventListener("focus", tick);
+    return () => {
+      clearInterval(id);
+      if (typeof window !== "undefined") window.removeEventListener("focus", tick);
+    };
+  }, [user]);
+
   const doLogin = async e => {
     e.preventDefault();
     setAuthErr("");
     setInfoMsg("");
     try {
       await firebase.auth().signInWithEmailAndPassword(loginIdToAuthEmail(email), password);
+      neoSaveSavedLoginId(NEO_HQ_SAVED_LOGIN_ID_KEY, email);
+      neoSetAuthSessionStarted(NEO_HQ_AUTH_SESSION_START_KEY);
     } catch (err) {
       setAuthErr(mapAuthError(err));
     }
@@ -188,6 +267,8 @@ function AdminLoginGate() {
     }
     try {
       await firebase.auth().createUserWithEmailAndPassword(authEmail, password);
+      neoSaveSavedLoginId(NEO_HQ_SAVED_LOGIN_ID_KEY, email);
+      neoSetAuthSessionStarted(NEO_HQ_AUTH_SESSION_START_KEY);
     } catch (err) {
       setAuthErr(mapAuthError(err));
     }
@@ -275,6 +356,9 @@ function AdminLoginGate() {
               )}
               {authErr ? <div style={{ color: "#DC2626", fontSize: 13, marginBottom: 12 }}>{authErr}</div> : null}
               {infoMsg ? <div style={{ color: "#059669", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{infoMsg}</div> : null}
+              {authMode === "login" ? (
+                <p style={{ fontSize: 11, color: "#9CA3AF", lineHeight: 1.45, marginBottom: 10 }}>아이디(또는 이메일)는 이 브라우저에만 저장됩니다. 로그인 후 <b>24시간</b>이 지나면 자동으로 로그아웃됩니다.</p>
+              ) : null}
               <button type="submit" style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 15, background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff", marginBottom: 14 }}>
                 {authMode === "login" ? "로그인" : authMode === "signup" ? "관리자 회원가입" : "재설정 메일 보내기"}
               </button>
@@ -316,7 +400,7 @@ function AdminLoginGate() {
         <p style={{ color: "#028090", fontSize: 13, textAlign: "center", maxWidth: 440, lineHeight: 1.55, padding: "10px 14px", background: "#ECFEFF", borderRadius: 12, border: "1px solid #99F6E4" }}>
           <b>현장 영업사원</b>으로 가입·로그인한 계정입니다. 매장 방문·일지는 <b>현장_영업사원.html</b> 을 여세요. 이 페이지는 본사 관리자 전용입니다.
         </p>
-        <button type="button" onClick={() => firebase.auth().signOut()} style={{ padding: "10px 22px", borderRadius: 10, border: "1px solid #E5E7EB", cursor: "pointer", background: "#fff", fontWeight: 600 }}>다른 계정으로 로그인</button>
+        <button type="button" onClick={() => neoHqSignOut()} style={{ padding: "10px 22px", borderRadius: 10, border: "1px solid #E5E7EB", cursor: "pointer", background: "#fff", fontWeight: 600 }}>다른 계정으로 로그인</button>
       </div>
     );
   }
@@ -498,6 +582,9 @@ function RepChatPanel({ repId, isAdmin }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkTitle, setLinkTitle] = useState("");
+  const [linkSending, setLinkSending] = useState(false);
   const bottomRef = useRef(null);
   useEffect(() => {
     const db = firebase.firestore();
@@ -527,9 +614,77 @@ function RepChatPanel({ repId, isAdmin }) {
       setSending(false);
     }
   };
+  const sendLink = async () => {
+    if (!isAdmin || linkSending) return;
+    let u = (linkUrl || "").trim();
+    if (!u) {
+      alert("링크 주소를 입력해 주세요.");
+      return;
+    }
+    if (!/^https?:\/\//i.test(u)) u = NEO_PUBLIC_URL_SCHEME + u.replace(/^\/+/, "");
+    if (u.length > 2048) {
+      alert("링크가 너무 깁니다.");
+      return;
+    }
+    try {
+      new URL(u);
+    } catch (e) {
+      alert("올바른 URL 형식인지 확인해 주세요.");
+      return;
+    }
+    const title = (linkTitle || "").trim();
+    const lineText = "[링크] " + (title || u);
+    setLinkSending(true);
+    try {
+      const db = firebase.firestore();
+      await db.collection("chats").doc(String(repId)).collection("messages").add({
+        from: "admin",
+        kind: "link",
+        url: u,
+        linkTitle: title,
+        text: lineText,
+        createdAt: new Date().toISOString(),
+      });
+      setLinkUrl("");
+      setLinkTitle("");
+    } catch (e) {
+      alert("링크 전송 실패: " + ((e && e.message) || e));
+    } finally {
+      setLinkSending(false);
+    }
+  };
+  const bubbleInner = (m, mine) => {
+    if (m.kind === "link" && m.url) {
+      const u = String(m.url).trim();
+      const label = (m.linkTitle && String(m.linkTitle).trim()) || u;
+      return (
+        <div style={{ lineHeight: 1.45 }}>
+          <div style={{ fontSize: 10, opacity: 0.9, marginBottom: 4 }}>🔗 링크</div>
+          <a href={u} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{
+            color: mine ? "#fff" : "#028090", fontWeight: 700, textDecoration: "underline", wordBreak: "break-all", fontSize: 13,
+          }}>{label}</a>
+          {m.linkTitle ? <div style={{ fontSize: 10, marginTop: 6, opacity: 0.85, wordBreak: "break-all" }}>{u}</div> : null}
+        </div>
+      );
+    }
+    return m.text;
+  };
   return (
     <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, overflow: "hidden", background: "#F8FAFB" }}>
       <div style={{ padding: "10px 14px", fontSize: 13, fontWeight: 700, color: "#1A1A2E", background: "#fff", borderBottom: "1px solid #E5E7EB" }}>실시간 메시지 (담당 ID {repId})</div>
+      {isAdmin ? (
+        <div style={{ padding: "12px 14px", background: "#ECFEFF", borderBottom: "1px solid #99F6E4" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#0F766E", marginBottom: 8 }}>링크 보내기</div>
+          <input value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder="http://… (영업사원 앱에 표시됩니다)"
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #99F6E4", fontSize: 13, boxSizing: "border-box", marginBottom: 8 }} />
+          <input value={linkTitle} onChange={e => setLinkTitle(e.target.value)} placeholder="버튼에 보일 제목 (선택)"
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #99F6E4", fontSize: 13, boxSizing: "border-box", marginBottom: 8 }} />
+          <button type="button" onClick={sendLink} disabled={linkSending || !(linkUrl || "").trim()} style={{
+            width: "100%", padding: "9px 12px", borderRadius: 8, border: "none", cursor: linkSending || !(linkUrl || "").trim() ? "not-allowed" : "pointer",
+            fontWeight: 700, fontSize: 12, background: linkSending || !(linkUrl || "").trim() ? "#D1D5DB" : "#028090", color: "#fff",
+          }}>{linkSending ? "전송 중…" : "영업사원에게 링크 전송"}</button>
+        </div>
+      ) : null}
       <div style={{ height: 280, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
         {messages.length === 0 ? (
           <div style={{ fontSize: 13, color: "#9CA3AF", textAlign: "center", padding: 24 }}>대화가 없습니다. 아래에서 메시지를 보내세요.</div>
@@ -542,11 +697,11 @@ function RepChatPanel({ repId, isAdmin }) {
                   fontSize: 10, color: "#9CA3AF", marginBottom: 2, paddingLeft: mine ? 0 : 4, paddingRight: mine ? 4 : 0, textAlign: mine ? "right" : "left",
                 }}>{m.from === "admin" ? "관리자" : "사원"} · {(m.createdAt || "").slice(5, 16)}</div>
                 <div style={{
-                  padding: "8px 12px", borderRadius: 12, fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  padding: "8px 12px", borderRadius: 12, fontSize: 13, lineHeight: 1.45, whiteSpace: m.kind === "link" ? "normal" : "pre-wrap", wordBreak: "break-word",
                   background: mine ? "linear-gradient(135deg, #028090, #00A896)" : "#fff",
                   color: mine ? "#fff" : "#374151",
                   border: mine ? "none" : "1px solid #E5E7EB",
-                }}>{m.text}</div>
+                }}>{bubbleInner(m, mine)}</div>
               </div>
             );
           })
@@ -579,6 +734,7 @@ function Dashboard() {
   const [showDeleteRepModal, setShowDeleteRepModal] = useState(false);
   const [repPendingDelete, setRepPendingDelete] = useState(null);
   const [joinRequests, setJoinRequests] = useState([]);
+  const [fieldAppUrlCopied, setFieldAppUrlCopied] = useState(false);
   const [showAnnounceModal, setShowAnnounceModal] = useState(false);
   const [announceTitle, setAnnounceTitle] = useState("");
   const [announceBody, setAnnounceBody] = useState("");
@@ -618,6 +774,52 @@ function Dashboard() {
       })),
     }));
   }, [repRows, storeRows]);
+
+  const fieldAppUrl = useMemo(() => getNeoFieldAppUrl(), []);
+
+  const copyFieldAppUrl = () => {
+    const u = fieldAppUrl || getNeoFieldAppUrl();
+    if (!u) {
+      window.alert("영업사원 앱 주소를 만들 수 없습니다. firebase-config.js의 projectId를 확인하거나, firebase-config.js에서 window.__NEO_FIELD_APP_URL__ 에 https://…/현장_영업사원.html 형태로 직접 넣을 수 있습니다.");
+      return;
+    }
+    const done = () => {
+      setFieldAppUrlCopied(true);
+      window.setTimeout(() => setFieldAppUrlCopied(false), 2000);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(u).then(done).catch(() => {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = u;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.left = "-2000px";
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+          done();
+        } catch (e2) {
+          window.prompt("아래 주소를 복사해 주세요:", u);
+        }
+      });
+    } else {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = u;
+        ta.style.position = "fixed";
+        ta.style.left = "-2000px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        done();
+      } catch (e2) {
+        window.prompt("아래 주소를 복사해 주세요:", u);
+      }
+    }
+  };
 
   useEffect(() => {
     const cfg = window.__NEO_FIREBASE_CONFIG__;
@@ -962,7 +1164,7 @@ function Dashboard() {
             padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.45)", cursor: "pointer", fontSize: 12, fontWeight: 600,
             background: notifEnabled ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.08)", color: "#fff",
           }}>{notifEnabled ? "알림 켜짐" : "신규 알림 켜기"}</button>
-          <button type="button" onClick={() => firebase.auth().signOut()} style={{
+          <button type="button" onClick={() => neoHqSignOut()} style={{
             padding: "7px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 12, fontWeight: 600,
             background: "rgba(0,0,0,0.08)", color: "#fff",
           }}>로그아웃</button>
@@ -1178,6 +1380,30 @@ function Dashboard() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 12 }}>
             <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#1A1A2E" }}>영업사원 앱 가입 요청</h2>
             <p style={{ margin: 0, fontSize: 12, color: "#6B7280", maxWidth: 480, lineHeight: 1.5 }}>앱에서 정보를 제출한 사용자입니다. 승인 시 reps 문서와 해당 UID의 profiles가 자동 생성됩니다.</p>
+          </div>
+          <div style={{
+            marginBottom: 18, background: "#fff", borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+            border: "1px solid #E5E7EB",
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A2E", marginBottom: 8 }}>영업사원 앱 주소</div>
+            <p style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5, marginBottom: 10 }}>
+              가입 요청자에게 아래 주소를 보내 두면, 해당 링크에서 앱을 연 뒤 로그인·가입 요청을 진행할 수 있습니다. 입력창에서 선택 후 붙여넣기 하거나 <b>주소 복사</b>를 누르세요.
+            </p>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "stretch" }}>
+              <input
+                readOnly
+                value={fieldAppUrl || "(firebase-config.js의 projectId 등으로 주소를 만들 수 없습니다)"}
+                onFocus={e => e.target.select()}
+                style={{
+                  flex: "1 1 220px", minWidth: 0, padding: "10px 12px", borderRadius: 10, border: "1px solid #E5E7EB",
+                  fontSize: 12, fontFamily: "ui-monospace, monospace", background: "#F9FAFB", color: "#374151",
+                }}
+              />
+              <button type="button" onClick={copyFieldAppUrl} style={{
+                padding: "10px 20px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13,
+                background: fieldAppUrlCopied ? "#059669" : "linear-gradient(135deg, #028090, #00A896)", color: "#fff", flexShrink: 0,
+              }}>{fieldAppUrlCopied ? "복사됨" : "주소 복사"}</button>
+            </div>
           </div>
           {joinRequests.length === 0 ? (
             <div style={{ background: "#fff", borderRadius: 16, padding: 48, textAlign: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", color: "#9CA3AF", fontSize: 14 }}>대기 중인 요청이 없습니다</div>
