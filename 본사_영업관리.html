@@ -17,6 +17,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
+<script src="neo-incentive.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F8FAFB; }
@@ -906,6 +907,8 @@ function Dashboard() {
         note: s.note || "",
         address: s.address || "",
         storeGps: s.storeGps || null,
+        createdAt: s.createdAt,
+        activatedAt: s.activatedAt,
       })),
     }));
   }, [repRows, storeRows]);
@@ -1096,7 +1099,19 @@ function Dashboard() {
   const filtered = selectedRegion === "전체" ? reps : reps.filter(r => r.region === selectedRegion);
   const totalStores = reps.reduce((a, r) => a + r.stores.length, 0);
   const activatedStores = reps.reduce((a, r) => a + r.stores.filter(s => s.activated).length, 0);
-  const totalIncentive = reps.reduce((a, r) => a + r.stores.length * 20000 + r.stores.filter(s => s.activated).length * 10000, 0);
+  const incentiveRange = typeof neoSettlementContainingDate === "function" ? neoSettlementContainingDate(new Date()) : null;
+  const flatStoresIncentive = storeRows.map(s => ({
+    activated: !!s.activated,
+    createdAt: s.createdAt,
+    activatedAt: s.activatedAt,
+    date: s.date,
+  }));
+  const periodIncentiveTotal = incentiveRange && typeof neoSumIncentiveForStoresInRange === "function"
+    ? neoSumIncentiveForStoresInRange(flatStoresIncentive, incentiveRange.startMs, incentiveRange.endMs)
+    : 0;
+  const periodIncentivePieces = incentiveRange && typeof neoCountIncentivePiecesInRange === "function"
+    ? neoCountIncentivePiecesInRange(flatStoresIncentive, incentiveRange.startMs, incentiveRange.endMs)
+    : { entries: 0, activations: 0 };
   const activeReps = reps.filter(r => r.status === "active").length;
 
   const regionStats = regions.map(region => {
@@ -1406,8 +1421,18 @@ function Dashboard() {
             <StatCard label="총 입점 업체" value={totalStores} sub={"활성화 " + activatedStores + "곳"} icon="🏪" />
             <StatCard label="활성화율" value={(totalStores ? Math.round(activatedStores / totalStores * 100) : 0) + "%"} sub={activatedStores + " / " + totalStores} icon="✅" />
             <StatCard label="활동 매니저" value={activeReps + "명"} sub={"전체 " + reps.length + "명"} icon="👤" />
-            <StatCard label="누적 인센티브" value={(totalIncentive / 10000).toFixed(0) + "만원"} icon="💰" />
+            <StatCard
+              label="이번 정산 인센티브"
+              value={(periodIncentiveTotal / 10000).toFixed(1).replace(/\.0$/, "") + "만원"}
+              sub={incentiveRange ? (neoFormatSettlementRangeShort(incentiveRange) + " · " + neoFormatPayoutLine(incentiveRange)) : ""}
+              icon="💰"
+            />
           </div>
+          {incentiveRange ? (
+            <div style={{ fontSize: 12, color: "#6B7280", marginTop: -16, marginBottom: 22, lineHeight: 1.55, padding: "10px 12px", background: "#F9FAFB", borderRadius: 10, border: "1px solid #E5E7EB" }}>
+              구간 내 <b>입점 {periodIncentivePieces.entries}건</b> × 1만원 + 구간 내 <b>활성화 {periodIncentivePieces.activations}건</b> × 2만원 합산입니다. (전 구간 합계가 아닙니다.)
+            </div>
+          ) : null}
 
           <div style={{ background: "#fff", borderRadius: 16, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)", marginBottom: 24 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
@@ -1462,7 +1487,7 @@ function Dashboard() {
                       <td style={{ padding: "10px" }}><Badge color={s.activated ? "teal" : "orange"}>{s.activated ? "활성화" : "미활성화"}</Badge></td>
                       <td style={{ padding: "8px", textAlign: "center" }}>
                         <button type="button" onClick={() => setStoreDetail({
-                          store: { id: s.id, name: s.name, type: s.type, date: s.date, activated: s.activated, note: s.note, address: s.address, storeGps: s.storeGps },
+                          store: { id: s.id, name: s.name, type: s.type, date: s.date, activated: s.activated, note: s.note, address: s.address, storeGps: s.storeGps, createdAt: s.createdAt, activatedAt: s.activatedAt },
                           repName: s.rep, repRegion: s.region, repId: s.repId,
                         })} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #028090", background: "#fff", color: "#028090", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>보기</button>
                       </td>
@@ -1543,7 +1568,9 @@ function Dashboard() {
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {filtered.map(rep => {
                 const activated = rep.stores.filter(s => s.activated).length;
-                const incentive = rep.stores.length * 20000 + activated * 10000;
+                const incentive = incentiveRange && typeof neoSumIncentiveForStoresInRange === "function"
+                  ? neoSumIncentiveForStoresInRange(rep.stores, incentiveRange.startMs, incentiveRange.endMs)
+                  : 0;
                 return (
                   <div key={rep.id} onClick={() => setSelectedRep(rep)} style={{
                     background: "#fff", borderRadius: 16, padding: 22, cursor: "pointer",
@@ -1570,7 +1597,7 @@ function Dashboard() {
                         <div style={{ display: "flex", gap: 20 }}>
                           <div style={{ textAlign: "center" }}><div style={{ fontSize: 10, color: "#9CA3AF" }}>입점</div><div style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E" }}>{rep.stores.length}</div></div>
                           <div style={{ textAlign: "center" }}><div style={{ fontSize: 10, color: "#9CA3AF" }}>활성화</div><div style={{ fontSize: 20, fontWeight: 800, color: "#028090" }}>{activated}</div></div>
-                          <div style={{ textAlign: "center" }}><div style={{ fontSize: 10, color: "#9CA3AF" }}>인센티브</div><div style={{ fontSize: 20, fontWeight: 800, color: "#F59E0B" }}>{(incentive/10000).toFixed(0)}만</div></div>
+                          <div style={{ textAlign: "center" }}><div style={{ fontSize: 10, color: "#9CA3AF" }}>이번 정산</div><div style={{ fontSize: 20, fontWeight: 800, color: "#F59E0B" }}>{(incentive/10000).toFixed(1).replace(/\.0$/, "")}만</div></div>
                         </div>
                         <button type="button" onClick={e => { e.stopPropagation(); setRepPendingDelete(rep); setShowDeleteRepModal(true); }} style={{
                           padding: "8px 12px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#DC2626", flexShrink: 0,
@@ -1614,7 +1641,14 @@ function Dashboard() {
               <StatCard label="입점" value={selectedRep.stores.length} icon="🏪" />
               <StatCard label="활성화" value={selectedRep.stores.filter(s => s.activated).length} icon="✅" />
               <StatCard label="미활성화" value={selectedRep.stores.filter(s => !s.activated).length} icon="⏳" />
-              <StatCard label="인센티브" value={((selectedRep.stores.length * 20000 + selectedRep.stores.filter(s => s.activated).length * 10000) / 10000).toFixed(0) + "만원"} icon="💰" />
+              <StatCard
+                label="이번 정산 인센티브"
+                value={incentiveRange && typeof neoSumIncentiveForStoresInRange === "function"
+                  ? ((neoSumIncentiveForStoresInRange(selectedRep.stores, incentiveRange.startMs, incentiveRange.endMs) / 10000).toFixed(1).replace(/\.0$/, "") + "만원")
+                  : "0만원"}
+                sub={incentiveRange ? (neoFormatSettlementRangeShort(incentiveRange) + " 구간") : ""}
+                icon="💰"
+              />
             </div>
             <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: "#1A1A2E" }}>입점 업체 목록</h3>
             {selectedRep.stores.length === 0 ? (
@@ -1633,10 +1667,14 @@ function Dashboard() {
                       <td style={{ padding: "10px", color: "#6B7280" }}>{s.type}</td>
                       <td style={{ padding: "10px", color: "#6B7280" }}>{s.date}</td>
                       <td style={{ padding: "10px" }}><Badge color={s.activated ? "teal" : "orange"}>{s.activated ? "활성화" : "미활성화"}</Badge></td>
-                      <td style={{ padding: "10px", fontWeight: 700, color: s.activated ? "#028090" : "#F59E0B" }}>{s.activated ? "30,000원" : "20,000원"}</td>
+                      <td style={{ padding: "10px", fontWeight: 700, color: "#028090" }}>
+                        {incentiveRange && typeof neoStoreIncentiveInRange === "function"
+                          ? (neoStoreIncentiveInRange(s, incentiveRange.startMs, incentiveRange.endMs).toLocaleString("ko-KR") + "원")
+                          : "—"}
+                      </td>
                       <td style={{ padding: "8px", textAlign: "center" }}>
                         <button type="button" onClick={() => setStoreDetail({
-                          store: { id: s.id, name: s.name, type: s.type, date: s.date, activated: s.activated, note: s.note, address: s.address, storeGps: s.storeGps },
+                          store: { id: s.id, name: s.name, type: s.type, date: s.date, activated: s.activated, note: s.note, address: s.address, storeGps: s.storeGps, createdAt: s.createdAt, activatedAt: s.activatedAt },
                           repName: selectedRep.name, repRegion: selectedRep.region, repId: selectedRep.id,
                         })} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #028090", background: "#fff", color: "#028090", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>보기</button>
                       </td>

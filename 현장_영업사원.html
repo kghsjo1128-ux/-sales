@@ -18,6 +18,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="neo-kr-sigungu.js"></script>
+<script src="neo-incentive.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html {
@@ -44,7 +45,7 @@ body {
 }
 button { font-family: inherit; }
 input, select, textarea { font-family: inherit; }
-/* 웹에서는 OS·하드웨어 캡처를 완전히 막을 수 없음. 복사·우클릭·일부 단축키·인쇄 시 내용 숨김으로 완화 */
+/* 웹: 전원+볼륨 등 OS 스크린샷은 원천 차단 불가. 우클릭·단축키·복사(입력칸 제외)·드래그·3손가락 제스처 완화, 탭/앱 전환 시 잠시 화면 가림 */
 .neo-capture-guard {
   width: 100%;
   max-width: 100%;
@@ -64,6 +65,21 @@ input, select, textarea { font-family: inherit; }
 @media print {
   .neo-capture-guard, .neo-capture-guard * { visibility: hidden !important; }
   body::after { content: ""; display: block; }
+}
+/* 탭 전환·앱 전환 직전 등: 일부 기기에서 캡처/미리보기에 검은 화면이 잡히도록 */
+#neo-screenshot-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  background: #0b1220;
+  display: none;
+  pointer-events: none;
+}
+body.neo-screenshot-shield-on #neo-screenshot-shield {
+  display: block;
+}
+body.neo-screenshot-shield-on .neo-capture-guard {
+  filter: blur(22px);
 }
 /* 폰·태블릿·데스크톱: 본문 폭 자동 제한 */
 .neo-app-shell {
@@ -398,6 +414,14 @@ async function neoSendUserEmailVerification(user) {
   else await user.sendEmailVerification();
 }
 
+function neoFieldAllowCopyTarget(el) {
+  if (!el || el.nodeType !== 1) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (el.isContentEditable) return true;
+  return !!el.closest("input, textarea, select, [contenteditable='true']");
+}
+
 function ScreenshotGuard({ children }) {
   useEffect(() => {
     const blockMenu = e => { e.preventDefault(); };
@@ -415,12 +439,87 @@ function ScreenshotGuard({ children }) {
       }
     };
     window.addEventListener("keydown", blockKeys, true);
+
+    const blockCopyOutOfField = e => {
+      const t = e.target;
+      if (neoFieldAllowCopyTarget(t)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    document.addEventListener("copy", blockCopyOutOfField, true);
+    document.addEventListener("cut", blockCopyOutOfField, true);
+
+    const blockDrag = e => {
+      if (neoFieldAllowCopyTarget(e.target)) return;
+      e.preventDefault();
+    };
+    document.addEventListener("dragstart", blockDrag, true);
+
+    let shieldTimer = null;
+    const setShield = on => {
+      if (shieldTimer) {
+        clearTimeout(shieldTimer);
+        shieldTimer = null;
+      }
+      if (on) {
+        document.body.classList.add("neo-screenshot-shield-on");
+      } else {
+        document.body.classList.remove("neo-screenshot-shield-on");
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        setShield(true);
+      } else {
+        shieldTimer = setTimeout(() => setShield(false), 280);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    const onPageHide = () => setShield(true);
+    window.addEventListener("pagehide", onPageHide);
+
+    const isProbablyAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent || "");
+    let lastTouchCount = 0;
+    const onTouchStart = e => {
+      lastTouchCount = e.touches ? e.touches.length : 0;
+    };
+    const onTouchEnd = e => {
+      if (!isProbablyAndroid) {
+        lastTouchCount = 0;
+        return;
+      }
+      const n = e.changedTouches ? e.changedTouches.length : 0;
+      if (lastTouchCount >= 3 || n >= 3) {
+        const t = e.target;
+        if (!neoFieldAllowCopyTarget(t)) {
+          e.preventDefault();
+        }
+      }
+      lastTouchCount = 0;
+    };
+    document.addEventListener("touchstart", onTouchStart, { passive: true, capture: true });
+    document.addEventListener("touchend", onTouchEnd, { passive: false, capture: true });
+
     return () => {
       document.removeEventListener("contextmenu", blockMenu);
       window.removeEventListener("keydown", blockKeys, true);
+      document.removeEventListener("copy", blockCopyOutOfField, true);
+      document.removeEventListener("cut", blockCopyOutOfField, true);
+      document.removeEventListener("dragstart", blockDrag, true);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("touchstart", onTouchStart, true);
+      document.removeEventListener("touchend", onTouchEnd, true);
+      setShield(false);
     };
   }, []);
-  return <div className="neo-capture-guard">{children}</div>;
+  return (
+    <React.Fragment>
+      <div id="neo-screenshot-shield" aria-hidden="true" />
+      <div className="neo-capture-guard">{children}</div>
+    </React.Fragment>
+  );
 }
 
 function Badge({ children, color }) {
@@ -1153,6 +1252,9 @@ function App({ repId, onSignOut }) {
               note: x.note || "",
               status: x.activated ? "activated" : "pending",
               storeGps: x.storeGps || null,
+              activated: !!x.activated,
+              createdAt: x.createdAt,
+              activatedAt: x.activatedAt,
             };
           }));
         }, err => console.error(err));
@@ -1208,7 +1310,16 @@ function App({ repId, onSignOut }) {
 
   const activated = stores.filter(s => s.status === "activated").length;
   const pending = stores.filter(s => s.status === "pending").length;
-  const totalIncentive = stores.length * 20000 + activated * 10000;
+  const incentiveRange = typeof neoSettlementContainingDate === "function" ? neoSettlementContainingDate(headerNow) : null;
+  const storesForIncentive = stores.map(s => ({
+    activated: s.status === "activated",
+    createdAt: s.createdAt,
+    activatedAt: s.activatedAt,
+    date: s.date,
+  }));
+  const totalIncentive = incentiveRange && typeof neoSumIncentiveForStoresInRange === "function"
+    ? neoSumIncentiveForStoresInRange(storesForIncentive, incentiveRange.startMs, incentiveRange.endMs)
+    : 0;
   const todayVisits = visits.filter(v => v.date === new Date().toISOString().slice(0, 10)).length;
 
   const filteredStores = storeFilter === "all" ? stores : stores.filter(s => s.status === storeFilter);
@@ -1317,6 +1428,7 @@ function App({ repId, onSignOut }) {
         date: new Date().toISOString().slice(0, 10),
         activated: false,
         storeGps,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
       setNewStore({ name: "", type: "", address: "", note: "", addressSido: "", addressSigungu: "", addressDetail: "" });
       setShowAddStore(false);
@@ -1492,7 +1604,13 @@ function App({ repId, onSignOut }) {
     if (!window.confirm("선택한 " + selectedStoreIds.length + "곳을 " + (activated ? "활성화" : "미활성화") + "할까요?")) return;
     try {
       const db = firebase.firestore();
-      await Promise.all(selectedStoreIds.map(id => db.collection("stores").doc(id).update({ activated })));
+      const fv = firebase.firestore.FieldValue;
+      await Promise.all(selectedStoreIds.map(id => {
+        const ref = db.collection("stores").doc(id);
+        return activated
+          ? ref.update({ activated: true, activatedAt: fv.serverTimestamp() })
+          : ref.update({ activated: false, activatedAt: fv.delete() });
+      }));
       setSelectedStoreIds([]);
       setStoreSelectionMode(false);
     } catch (e) {
@@ -1539,7 +1657,12 @@ function App({ repId, onSignOut }) {
     const nextActivated = s.status !== "activated";
     try {
       const db = firebase.firestore();
-      await db.collection("stores").doc(String(id)).update({ activated: nextActivated });
+      const fv = firebase.firestore.FieldValue;
+      await db.collection("stores").doc(String(id)).update(
+        nextActivated
+          ? { activated: true, activatedAt: fv.serverTimestamp() }
+          : { activated: false, activatedAt: fv.delete() }
+      );
     } catch (e) {
       alert("상태 변경 실패: " + ((e && e.message) || e));
     }
@@ -1690,7 +1813,13 @@ function App({ repId, onSignOut }) {
       {tab === "home" && (
         <div style={NEO_SECTION_PAD}>
           <div style={{ fontSize: 20, fontWeight: 800, color: "#1A1A2E", marginBottom: 4 }}>안녕하세요! 👋</div>
-          <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 20 }}>오늘도 화이팅!</div>
+          <div style={{ fontSize: 13, color: "#6B7280", marginBottom: 12 }}>오늘도 화이팅!</div>
+          {incentiveRange && typeof neoFormatSettlementRangeShort === "function" ? (
+            <div style={{ fontSize: 11, color: "#1E40AF", marginBottom: 16, padding: "10px 12px", background: "#EFF6FF", borderRadius: 10, border: "1px solid #BFDBFE", lineHeight: 1.55 }}>
+              <b>정산 구간</b> {neoFormatSettlementRangeShort(incentiveRange)}<br />
+              {neoFormatPayoutLine(incentiveRange)} · 입점 1만원 + 활성화 2만원(구간별 누적)
+            </div>
+          ) : null}
 
           {/* Stats Grid — 좁은 화면 2열, 넓은 화면 4열 */}
           <div className="neo-stat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, marginBottom: 20 }}>
@@ -1698,7 +1827,7 @@ function App({ repId, onSignOut }) {
               { label: "총 입점", value: stores.length + "곳", icon: "🏪", color: "#1A1A2E" },
               { label: "활성화", value: activated + "곳", icon: "✅", color: "#028090" },
               { label: "미활성화", value: pending + "곳", icon: "⏳", color: "#D97706" },
-              { label: "누적 인센티브", value: (totalIncentive / 10000).toFixed(0) + "만원", icon: "💰", color: "#F59E0B" },
+              { label: "이번 정산 인센티브", value: (totalIncentive / 10000).toFixed(1).replace(/\.0$/, "") + "만원", icon: "💰", color: "#F59E0B" },
             ].map((s, i) => (
               <div key={i} style={{ background: "#fff", borderRadius: 14, padding: "16px 14px", boxShadow: "0 1px 4px rgba(0,0,0,0.05)", position: "relative", overflow: "hidden" }}>
                 <div style={{ position: "absolute", top: 10, right: 12, fontSize: 20, opacity: 0.1 }}>{s.icon}</div>
@@ -1870,13 +1999,23 @@ function App({ repId, onSignOut }) {
             <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
               <div style={{ flex: 1, background: "#E6FFFA", borderRadius: 10, padding: 12, textAlign: "center" }}>
                 <div style={{ fontSize: 11, color: "#028090" }}>입점</div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: "#028090" }}>20,000원</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#028090" }}>10,000원</div>
               </div>
               <div style={{ flex: 1, background: showDetail.status === "activated" ? "#ECFDF5" : "#F3F4F6", borderRadius: 10, padding: 12, textAlign: "center" }}>
                 <div style={{ fontSize: 11, color: showDetail.status === "activated" ? "#059669" : "#9CA3AF" }}>활성화</div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: showDetail.status === "activated" ? "#059669" : "#D1D5DB" }}>{showDetail.status === "activated" ? "+10,000원" : "미완료"}</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: showDetail.status === "activated" ? "#059669" : "#D1D5DB" }}>{showDetail.status === "activated" ? "+20,000원" : "미완료"}</div>
               </div>
             </div>
+            {incentiveRange && typeof neoStoreIncentiveInRange === "function" ? (
+              <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 14, padding: "8px 10px", background: "#F9FAFB", borderRadius: 8 }}>
+                이번 정산 구간 인정 합계: <b>{neoStoreIncentiveInRange({
+                  activated: showDetail.status === "activated",
+                  createdAt: showDetail.createdAt,
+                  activatedAt: showDetail.activatedAt,
+                  date: showDetail.date,
+                }, incentiveRange.startMs, incentiveRange.endMs).toLocaleString("ko-KR")}원</b>
+              </div>
+            ) : null}
 
             <button onClick={() => handleToggleStatus(showDetail.id)} style={{
               width: "100%", padding: "12px", borderRadius: 12, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
