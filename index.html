@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>네오래빗 · 배포 화면</title>
+  <meta name="description" content="네오래빗 현장·본사 영업 앱 바로가기. 카카오톡으로 받은 링크를 눌러 바로 열 수 있습니다." />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="네오래빗" />
+  <meta property="og:description" content="현장 영업(/f) · 본사 관리(/h) 짧은 링크로 바로 접속하세요." />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="네오래빗" />
+  <style>
+    :root { font-family: system-ui, "Segoe UI", sans-serif; color: #1a1a2e; }
+    body { margin: 0; padding: 24px 20px 40px; max-width: 520px; margin-inline: auto; line-height: 1.55; }
+    h1 { font-size: 1.35rem; margin: 0 0 8px; }
+    p.lead { margin: 0 0 20px; color: #6b7280; font-size: 0.95rem; }
+    ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+    a.card {
+      display: block; padding: 16px 18px; border-radius: 14px;
+      border: 1px solid #e5e7eb; text-decoration: none; color: inherit;
+      background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    }
+    a.card:hover { border-color: #028090; background: #f8fffe; }
+    a.card strong { display: block; font-size: 1.05rem; margin-bottom: 6px; color: #028090; }
+    a.card span { font-size: 0.8rem; color: #9ca3af; word-break: break-all; }
+    .hint { margin-top: 24px; padding: 12px 14px; background: #f3f4f6; border-radius: 10px; font-size: 0.85rem; color: #4b5563; }
+    code { font-size: 0.78rem; background: #e5e7eb; padding: 2px 6px; border-radius: 4px; }
+    .share-box { margin: 0 0 22px; padding: 14px 16px; border-radius: 14px; border: 1px solid #d1fae5; background: #ecfdf5; }
+    .share-box h2 { font-size: 0.95rem; margin: 0 0 10px; color: #065f46; }
+    .share-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 0.82rem; }
+    .share-row:last-child { margin-bottom: 0; }
+    .share-row label { flex: 1 1 160px; min-width: 0; color: #374151; }
+    .share-row code.url { display: block; word-break: break-all; background: #fff; padding: 6px 8px; border-radius: 8px; border: 1px solid #a7f3d0; font-size: 0.76rem; }
+    button.copy-btn {
+      flex: 0 0 auto; padding: 8px 12px; border-radius: 10px; border: 0; cursor: pointer;
+      background: #028090; color: #fff; font-size: 0.8rem; font-weight: 600;
+    }
+    button.copy-btn:hover { background: #026974; }
+    button.copy-btn:active { transform: scale(0.98); }
+    #copy-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 18px; border-radius: 999px;
+      background: #1f2937; color: #fff; font-size: 0.85rem; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 50; }
+    #copy-toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <h1>네오래빗</h1>
+  <p class="lead">카카오톡·문자·메일로 넘길 때는 아래 <b>짧은 주소(/f, /h)</b>를 복사해 보내세요. 한글 파일명 링크는 일부 앱에서 잘릴 수 있습니다.</p>
+
+  <div class="share-box" id="share-box" hidden>
+    <h2>공유용 주소 (복사)</h2>
+    <div class="share-row">
+      <div style="flex:1;min-width:0">
+        <label for="url-field">현장 · 영업사원</label>
+        <code class="url" id="url-field"></code>
+      </div>
+      <button type="button" class="copy-btn" data-copy-target="url-field">복사</button>
+      <a class="copy-btn" style="text-decoration:none;display:inline-flex;align-items:center;background:#0f766e" id="open-field" href="/f">열기</a>
+    </div>
+    <div class="share-row">
+      <div style="flex:1;min-width:0">
+        <label for="url-hq">본사 · 영업 관리</label>
+        <code class="url" id="url-hq"></code>
+      </div>
+      <button type="button" class="copy-btn" data-copy-target="url-hq">복사</button>
+      <a class="copy-btn" style="text-decoration:none;display:inline-flex;align-items:center;background:#0f766e" id="open-hq" href="/h">열기</a>
+    </div>
+    <div class="share-row">
+      <div style="flex:1;min-width:0">
+        <label for="url-sales">모바일 안내(현장)</label>
+        <code class="url" id="url-sales"></code>
+      </div>
+      <button type="button" class="copy-btn" data-copy-target="url-sales">복사</button>
+      <a class="copy-btn" style="text-decoration:none;display:inline-flex;align-items:center;background:#0f766e" href="/sales">열기</a>
+    </div>
+    <div class="share-row">
+      <div style="flex:1;min-width:0">
+        <label for="url-adminb">모바일 안내(본사)</label>
+        <code class="url" id="url-adminb"></code>
+      </div>
+      <button type="button" class="copy-btn" data-copy-target="url-adminb">복사</button>
+      <a class="copy-btn" style="text-decoration:none;display:inline-flex;align-items:center;background:#0f766e" href="/admin-check">열기</a>
+    </div>
+    <div class="share-row">
+      <div style="flex:1;min-width:0">
+        <label for="url-root">이 메뉴(안내 페이지)</label>
+        <code class="url" id="url-root"></code>
+      </div>
+      <button type="button" class="copy-btn" data-copy-target="url-root">복사</button>
+    </div>
+  </div>
+
+  <ul>
+    <li>
+      <a class="card" href="/f">
+        <strong>현장 · 영업사원 (가장 짧은 링크)</strong>
+        <span id="card-span-f">…/f</span>
+      </a>
+    </li>
+    <li>
+      <a class="card" href="/h">
+        <strong>본사 · 영업 관리 (가장 짧은 링크)</strong>
+        <span id="card-span-h">…/h</span>
+      </a>
+    </li>
+    <li>
+      <a class="card" href="./field.html">
+        <strong>현장 · field.html (동일 화면)</strong>
+        <span>…/field.html</span>
+      </a>
+    </li>
+    <li>
+      <a class="card" href="./hq.html">
+        <strong>본사 · hq.html (동일 화면)</strong>
+        <span>…/hq.html</span>
+      </a>
+    </li>
+    <li>
+      <a class="card" href="./%ED%98%84%EC%9E%A5_%EC%98%81%EC%97%85%EC%82%AC%EC%9B%90.html">
+        <strong>현장 · 원본 파일명</strong>
+        <span>현장_영업사원.html</span>
+      </a>
+    </li>
+    <li>
+      <a class="card" href="./%EB%B3%B8%EC%82%AC_%EC%98%81%EC%97%85%EA%B4%80%EB%A6%AC.html">
+        <strong>본사 · 원본 파일명</strong>
+        <span>본사_영업관리.html</span>
+      </a>
+    </li>
+  </ul>
+  <p class="hint">
+    위 <code>/f</code> · <code>/h</code> 는 영문·숫자만 있어 카톡에서도 잘리지 않고, 탭하면 곧바로 각 앱으로 연결됩니다. (서버에서 <code>field.html</code> / <code>hq.html</code> 로 넘겨 줍니다.)
+  </p>
+  <div id="copy-toast" role="status" aria-live="polite">주소를 복사했습니다</div>
+
+  <details class="hint" style="margin-top:16px">
+    <summary style="cursor:pointer;font-weight:600">Firebase Hosting 배포 방법</summary>
+    <ol style="margin:12px 0 0;padding-left:1.25rem;font-size:0.88rem;line-height:1.65">
+      <li><a href="https://nodejs.org/" target="_blank" rel="noopener">Node.js</a> 설치 후 터미널에서 <code>npm install -g firebase-tools</code></li>
+      <li>한 번만 <code>firebase login</code>으로 Google 계정 연결</li>
+      <li>이 폴더(<code>neo</code>)에서 <code>firebase deploy --only hosting</code> 실행<br>
+        Firestore 보안 규칙도 같이 올리려면 <code>firebase deploy --only hosting,firestore:rules</code></li>
+      <li>배포 전에 루트에 <code>firebase-config.js</code>가 있어야 합니다. 없으면 <code>firebase-config.example.js</code>를 복사해 채우세요.</li>
+      <li>Firebase 콘솔 → Authentication → 설정 → <strong>승인된 도메인</strong>에
+        <code>프로젝트ID.web.app</code>, <code>프로젝트ID.firebaseapp.com</code>과 사용할 커스텀 도메인을 추가하세요.</li>
+    </ol>
+    <p style="margin:10px 0 0;font-size:0.85rem">Windows에서는 이 폴더의 <code>deploy-hosting.ps1</code>을 실행해도 됩니다.</p>
+  </details>
+  <script>
+  (function () {
+    var origin = (location.protocol === "http:" || location.protocol === "https:") ? location.origin : "";
+    var box = document.getElementById("share-box");
+    var uField = document.getElementById("url-field");
+    var uHq = document.getElementById("url-hq");
+    var uSales = document.getElementById("url-sales");
+    var uAdminb = document.getElementById("url-adminb");
+    var uRoot = document.getElementById("url-root");
+    var toast = document.getElementById("copy-toast");
+    var f = document.getElementById("card-span-f");
+    var h = document.getElementById("card-span-h");
+    if (origin && uField && uHq && uSales && uAdminb && uRoot && box) {
+      uField.textContent = origin + "/f";
+      uHq.textContent = origin + "/h";
+      uSales.textContent = origin + "/sales";
+      uAdminb.textContent = origin + "/admin-check";
+      uRoot.textContent = origin + "/";
+      box.hidden = false;
+      if (f) f.textContent = origin.replace(/^https?:\/\//, "") + "/f";
+      if (h) h.textContent = origin.replace(/^https?:\/\//, "") + "/h";
+    }
+    function showToast() {
+      if (!toast) return;
+      toast.classList.add("show");
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(function () { toast.classList.remove("show"); }, 1600);
+    }
+    function copyEl(id) {
+      var el = document.getElementById(id);
+      if (!el || !el.textContent) return;
+      var text = el.textContent.trim();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(showToast).catch(function () { fallbackCopy(text); });
+      } else {
+        fallbackCopy(text);
+      }
+    }
+    function fallbackCopy(text) {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        showToast();
+      } catch (e) {
+        window.prompt("아래 주소를 길게 눌러 복사하세요:", text);
+      }
+    }
+    document.querySelectorAll("[data-copy-target]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        copyEl(btn.getAttribute("data-copy-target"));
+      });
+    });
+  })();
+  </script>
+</body>
+</html>

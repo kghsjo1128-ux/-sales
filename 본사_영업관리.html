@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>네오래빗 본사 관리 (관리자 전용)</title>
+<meta name="description" content="네오래빗 본사 영업 관리 · 관리자 전용" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="네오래빗 · 본사 관리" />
+<meta property="og:description" content="입점·사원 통계 등 본사 콘솔입니다. 링크를 눌러 로그인하세요." />
+<meta name="twitter:card" content="summary" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -78,7 +83,7 @@ function neoHqSignOut() {
 }
 
 /** 인증 메일·Hosting 기본 URL 등에 쓰는 스킴(http / https). */
-const NEO_PUBLIC_URL_SCHEME = "http://";
+const NEO_PUBLIC_URL_SCHEME = "https://";
 
 // Firestore 규칙 isAdmin() 과 동일 (회사 도메인 또는 profiles.role === "admin" 또는 공용 계정)
 const ADMIN_EMAIL_DOMAIN = "@unsat.co.kr";
@@ -125,7 +130,7 @@ function neoAuthActionCodeSettings() {
   }
   const pid = cfg.projectId;
   if (typeof pid === "string" && pid && String(pid).indexOf("YOUR_") !== 0) {
-    return { url: NEO_PUBLIC_URL_SCHEME + pid + ".web.app/본사_영업관리.html", handleCodeInApp: false };
+    return { url: NEO_PUBLIC_URL_SCHEME + pid + ".web.app/h", handleCodeInApp: false };
   }
   const domain = cfg.authDomain;
   if (typeof domain === "string" && domain && String(domain).indexOf("YOUR_") !== 0 && domain.indexOf(".") > 0) {
@@ -143,15 +148,85 @@ function getNeoFieldAppUrl() {
   }
   if (typeof window !== "undefined" && window.location && (window.location.protocol === "https:" || window.location.protocol === "http:")) {
     try {
-      return new URL("현장_영업사원.html", window.location.href).href.split("#")[0];
+      return new URL("/f", window.location.origin).href.split("#")[0];
     } catch (e) { /* ignore */ }
   }
   const cfg = window.__NEO_FIREBASE_CONFIG__ || {};
   const pid = cfg.projectId;
   if (typeof pid === "string" && pid && String(pid).indexOf("YOUR_") !== 0) {
-    return NEO_PUBLIC_URL_SCHEME + pid + ".web.app/현장_영업사원.html";
+    return NEO_PUBLIC_URL_SCHEME + pid + ".web.app/f";
   }
   return "";
+}
+
+function getNeoPublicOrigin() {
+  if (typeof window !== "undefined" && window.location && (window.location.protocol === "https:" || window.location.protocol === "http:")) {
+    return window.location.origin;
+  }
+  const cfg = window.__NEO_FIREBASE_CONFIG__ || {};
+  const pid = cfg.projectId;
+  if (typeof pid === "string" && pid && String(pid).indexOf("YOUR_") !== 0) {
+    return NEO_PUBLIC_URL_SCHEME + pid + ".web.app";
+  }
+  return "";
+}
+
+/** 본사 관리 앱 짧은 주소. (선택) firebase-config.js 의 window.__NEO_HQ_APP_URL__ 로 덮어쓰기. */
+function getNeoHqAppUrl() {
+  const custom = typeof window !== "undefined" && window.__NEO_HQ_APP_URL__;
+  if (typeof custom === "string") {
+    const t = custom.trim();
+    if (t.indexOf("https://") === 0 || t.indexOf("http://") === 0) return t.split("#")[0];
+  }
+  const o = getNeoPublicOrigin();
+  if (o) {
+    try {
+      return new URL("/h", o).href.split("#")[0];
+    } catch (e) { /* ignore */ }
+  }
+  return "";
+}
+
+function getNeoSalesBridgeUrl() {
+  const o = getNeoPublicOrigin();
+  return o ? o + "/sales" : "";
+}
+
+function getNeoAdminBridgeUrl() {
+  const o = getNeoPublicOrigin();
+  return o ? o + "/admin-check" : "";
+}
+
+function neoCopyToClipboard(text) {
+  if (!text) return Promise.reject(new Error("empty"));
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => neoCopyToClipboardFallback(text));
+  }
+  return neoCopyToClipboardFallback(text);
+}
+
+function neoCopyToClipboardFallback(text) {
+  return new Promise((resolve, reject) => {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-2000px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      resolve();
+    } catch (e) {
+      try {
+        window.prompt("아래 주소를 복사해 주세요:", text);
+        resolve();
+      } catch (e2) {
+        reject(e2);
+      }
+    }
+  });
 }
 
 function AdminLoginGate() {
@@ -491,6 +566,62 @@ function Badge({ children, color }) {
   );
 }
 
+/** 방문 기록 행: GPS·거리 표시 또는 미인증 배지 */
+function NeoHqFormatFsTime(t) {
+  if (t == null) return "—";
+  try {
+    if (typeof t.toDate === "function") {
+      const d = t.toDate();
+      if (!isNaN(d.getTime())) return d.toLocaleString("ko-KR");
+    }
+    if (typeof t.toMillis === "function") {
+      const ms = t.toMillis();
+      if (Number.isFinite(ms)) return new Date(ms).toLocaleString("ko-KR");
+    }
+    if (typeof t === "object" && typeof t.seconds === "number") {
+      return new Date(t.seconds * 1000).toLocaleString("ko-KR");
+    }
+  } catch (e) { /* ignore */ }
+  return "—";
+}
+
+function NeoHqVisitGpsCell({ visit }) {
+  const g = visit && visit.gps;
+  const ok = g && typeof g.lat === "number" && typeof g.lng === "number" && Number.isFinite(g.lat) && Number.isFinite(g.lng);
+  if (!ok) {
+    return <Badge color="red">위치 미인증</Badge>;
+  }
+  const lat = g.lat.toFixed(5);
+  const lng = g.lng.toFixed(5);
+  const d = g.distanceFromStore;
+  const hasDist = typeof d === "number" && Number.isFinite(d);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start", maxWidth: 280 }}>
+      <span style={{ fontSize: 12, color: "#374151", fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>{lat}, {lng}</span>
+      {hasDist ? (
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#028090" }}>업체에서 {Math.round(d)}m</span>
+      ) : null}
+    </div>
+  );
+}
+
+/** 입점 시 영업사원 앱에서 저장한 기준 GPS */
+function NeoHqStoreGpsPanel({ storeGps }) {
+  const g = storeGps;
+  const ok = g && typeof g.lat === "number" && typeof g.lng === "number" && Number.isFinite(g.lat) && Number.isFinite(g.lng);
+  if (!ok) {
+    return <div style={{ fontSize: 13, color: "#6B7280", padding: 12, background: "#F9FAFB", borderRadius: 10, border: "1px dashed #E5E7EB" }}>등록 시점 GPS가 없거나 옛 데이터입니다.</div>;
+  }
+  const acc = typeof g.accuracy === "number" && Number.isFinite(g.accuracy) ? Math.round(g.accuracy) + " m" : "—";
+  return (
+    <div style={{ padding: 14, borderRadius: 12, background: "#F8FAFC", border: "1px solid #E5E7EB" }}>
+      <div style={{ fontWeight: 700, marginBottom: 8, color: "#374151", fontSize: 13 }}>입점 저장 시 위치 (영업사원 GPS)</div>
+      <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 13, color: "#1A1A2E", wordBreak: "break-all", lineHeight: 1.5 }}>{g.lat.toFixed(6)}, {g.lng.toFixed(6)}</div>
+      <div style={{ marginTop: 8, fontSize: 12, color: "#6B7280" }}>정확도(추정): {acc} · 기록 시각: {NeoHqFormatFsTime(g.timestamp)}</div>
+    </div>
+  );
+}
+
 function StatCard({ label, value, sub, icon }) {
   return (
     <div style={{
@@ -506,7 +637,7 @@ function StatCard({ label, value, sub, icon }) {
   );
 }
 
-function Modal({ open, onClose, title, children }) {
+function Modal({ open, onClose, title, children, maxWidth }) {
   if (!open) return null;
   return (
     <div style={{
@@ -515,8 +646,8 @@ function Modal({ open, onClose, title, children }) {
       backdropFilter: "blur(4px)",
     }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: "#fff", borderRadius: 20, padding: 32, width: "90%", maxWidth: 460,
-        boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+        background: "#fff", borderRadius: 20, padding: 32, width: "90%", maxWidth: maxWidth || 460,
+        boxShadow: "0 20px 60px rgba(0,0,0,0.15)", maxHeight: "90vh", overflowY: "auto",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
           <h3 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#1A1A2E" }}>{title}</h3>
@@ -734,7 +865,10 @@ function Dashboard() {
   const [showDeleteRepModal, setShowDeleteRepModal] = useState(false);
   const [repPendingDelete, setRepPendingDelete] = useState(null);
   const [joinRequests, setJoinRequests] = useState([]);
-  const [fieldAppUrlCopied, setFieldAppUrlCopied] = useState(false);
+  const [storeDeleteRequests, setStoreDeleteRequests] = useState([]);
+  const [shareCopiedKey, setShareCopiedKey] = useState("");
+  const shareCopyTimerRef = useRef(null);
+  const [storeDetail, setStoreDetail] = useState(null);
   const [showAnnounceModal, setShowAnnounceModal] = useState(false);
   const [announceTitle, setAnnounceTitle] = useState("");
   const [announceBody, setAnnounceBody] = useState("");
@@ -771,54 +905,70 @@ function Dashboard() {
         activated: !!s.activated,
         note: s.note || "",
         address: s.address || "",
+        storeGps: s.storeGps || null,
       })),
     }));
   }, [repRows, storeRows]);
 
+  const visitsForSelectedRep = useMemo(() => {
+    if (!selectedRep) return [];
+    const rid = String(selectedRep.id);
+    return visitRows
+      .filter(v => String(v.repId) === rid)
+      .sort((a, b) => {
+        const da = a.date || "";
+        const db = b.date || "";
+        if (db !== da) return db.localeCompare(da);
+        return String(b.id || "").localeCompare(String(a.id || ""));
+      });
+  }, [visitRows, selectedRep]);
+
+  const dashboardRecentVisits = useMemo(() => {
+    const tsMs = v => {
+      const g = v && v.gps;
+      if (!g || !g.timestamp) return 0;
+      const t = g.timestamp;
+      if (typeof t.toMillis === "function") return t.toMillis();
+      if (typeof t === "object" && typeof t.seconds === "number") {
+        return t.seconds * 1000 + Math.floor((t.nanoseconds || 0) / 1e6);
+      }
+      return 0;
+    };
+    return [...visitRows].sort((a, b) => tsMs(b) - tsMs(a)).slice(0, 15);
+  }, [visitRows]);
+
   const fieldAppUrl = useMemo(() => getNeoFieldAppUrl(), []);
+  const hqAppUrl = useMemo(() => getNeoHqAppUrl(), []);
+  const publicOrigin = useMemo(() => getNeoPublicOrigin(), []);
+  const salesBridgeUrl = useMemo(() => getNeoSalesBridgeUrl(), []);
+  const adminBridgeUrl = useMemo(() => getNeoAdminBridgeUrl(), []);
+  const hubRootUrl = useMemo(() => (publicOrigin ? publicOrigin + "/" : ""), [publicOrigin]);
+
+  const markShareCopied = (key) => {
+    setShareCopiedKey(key);
+    if (shareCopyTimerRef.current) window.clearTimeout(shareCopyTimerRef.current);
+    shareCopyTimerRef.current = window.setTimeout(() => setShareCopiedKey(""), 2200);
+  };
+
+  useEffect(() => () => {
+    if (shareCopyTimerRef.current) window.clearTimeout(shareCopyTimerRef.current);
+  }, []);
+
+  const copyShareUrl = (url, key) => {
+    if (!url) {
+      window.alert("주소를 만들 수 없습니다. firebase-config.js의 projectId를 확인하거나, 수동으로 https://(프로젝트).web.app 형태를 입력해 주세요.");
+      return;
+    }
+    neoCopyToClipboard(url).then(() => markShareCopied(key)).catch(() => window.alert("복사에 실패했습니다. 주소를 길게 눌러 직접 복사해 주세요."));
+  };
 
   const copyFieldAppUrl = () => {
     const u = fieldAppUrl || getNeoFieldAppUrl();
     if (!u) {
-      window.alert("영업사원 앱 주소를 만들 수 없습니다. firebase-config.js의 projectId를 확인하거나, firebase-config.js에서 window.__NEO_FIELD_APP_URL__ 에 https://…/현장_영업사원.html 형태로 직접 넣을 수 있습니다.");
+      window.alert("영업사원 앱 주소를 만들 수 없습니다. firebase-config.js의 projectId를 확인하거나, firebase-config.js에서 window.__NEO_FIELD_APP_URL__ 에 https://…/f 형태(또는 전체 주소)로 직접 넣을 수 있습니다.");
       return;
     }
-    const done = () => {
-      setFieldAppUrlCopied(true);
-      window.setTimeout(() => setFieldAppUrlCopied(false), 2000);
-    };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(u).then(done).catch(() => {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = u;
-          ta.setAttribute("readonly", "");
-          ta.style.position = "fixed";
-          ta.style.left = "-2000px";
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand("copy");
-          document.body.removeChild(ta);
-          done();
-        } catch (e2) {
-          window.prompt("아래 주소를 복사해 주세요:", u);
-        }
-      });
-    } else {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = u;
-        ta.style.position = "fixed";
-        ta.style.left = "-2000px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-        done();
-      } catch (e2) {
-        window.prompt("아래 주소를 복사해 주세요:", u);
-      }
-    }
+    copyShareUrl(u, "field");
   };
 
   useEffect(() => {
@@ -827,7 +977,7 @@ function Dashboard() {
       setLoadState({ loading: false, error: "neo 폴더의 firebase-config.js에 Firebase 웹 앱 설정값을 넣어주세요." });
       return;
     }
-    let unsubReps, unsubStores, unsubVisits, unsubSettings, unsubJoinRequests;
+    let unsubReps, unsubStores, unsubVisits, unsubSettings, unsubJoinRequests, unsubStoreDeleteRequests;
     (async () => {
       try {
         if (!firebase.apps.length) firebase.initializeApp(cfg);
@@ -851,6 +1001,10 @@ function Dashboard() {
           snap => setJoinRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
           err => console.error(err)
         );
+        unsubStoreDeleteRequests = db.collection("store_deletion_requests").where("status", "==", "pending").onSnapshot(
+          snap => setStoreDeleteRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+          err => console.error(err)
+        );
         setLoadState({ loading: false, error: "" });
       } catch (e) {
         console.error(e);
@@ -863,6 +1017,7 @@ function Dashboard() {
       if (unsubVisits) unsubVisits();
       if (unsubSettings) unsubSettings();
       if (unsubJoinRequests) unsubJoinRequests();
+      if (unsubStoreDeleteRequests) unsubStoreDeleteRequests();
     };
   }, []);
 
@@ -1058,6 +1213,33 @@ function Dashboard() {
     }
   };
 
+  const handleApproveStoreDeleteRequest = async req => {
+    const sid = String(req.storeId || "");
+    const reqDocId = String(req.id);
+    if (!sid || !reqDocId) return;
+    if (!window.confirm("이 업체를 삭제하고 요청을 닫을까요? 되돌릴 수 없습니다.")) return;
+    try {
+      const db = firebase.firestore();
+      const batch = db.batch();
+      batch.delete(db.collection("stores").doc(sid));
+      batch.delete(db.collection("store_deletion_requests").doc(reqDocId));
+      await batch.commit();
+    } catch (e) {
+      alert("처리 실패: " + ((e && e.message) || e));
+    }
+  };
+
+  const handleRejectStoreDeleteRequest = async req => {
+    const reqDocId = String(req.id);
+    if (!reqDocId) return;
+    if (!window.confirm("요청만 제거할까요? 업체 데이터는 그대로 둡니다.")) return;
+    try {
+      await firebase.firestore().collection("store_deletion_requests").doc(reqDocId).delete();
+    } catch (e) {
+      alert("처리 실패: " + ((e && e.message) || e));
+    }
+  };
+
   const publishRepAnnouncement = async () => {
     const title = announceTitle.trim();
     const body = announceBody.trim();
@@ -1112,6 +1294,8 @@ function Dashboard() {
       await runBatchDeletes(storesSnap);
       const visitsSnap = await db.collection("visits").where("repId", "==", rid).get();
       await runBatchDeletes(visitsSnap);
+      const delReqSnap = await db.collection("store_deletion_requests").where("repId", "==", rid).get();
+      await runBatchDeletes(delReqSnap);
       await db.collection("reps").doc(rid).delete();
       setShowDeleteRepModal(false);
       setRepPendingDelete(null);
@@ -1148,12 +1332,12 @@ function Dashboard() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          {["dashboard", "reps", "regions", "requests"].map(v => (
+          {["dashboard", "reps", "regions", "requests", "delreq"].map(v => (
             <button key={v} onClick={() => { setView(v); setSelectedRep(null); }} style={{
               padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, transition: "all 0.2s",
               background: view === v ? "#fff" : "rgba(255,255,255,0.15)", color: view === v ? "#028090" : "#fff",
             }}>
-              {v === "dashboard" ? "대시보드" : v === "reps" ? "영업사원" : v === "regions" ? "지역 관리" : "가입 요청" + (joinRequests.length ? " (" + joinRequests.length + ")" : "")}
+              {v === "dashboard" ? "대시보드" : v === "reps" ? "영업사원" : v === "regions" ? "지역 관리" : v === "requests" ? "가입 요청" + (joinRequests.length ? " (" + joinRequests.length + ")" : "") : "업체 삭제" + (storeDeleteRequests.length ? " (" + storeDeleteRequests.length + ")" : "")}
             </button>
           ))}
           <button type="button" onClick={() => setShowAnnounceModal(true)} style={{
@@ -1168,6 +1352,44 @@ function Dashboard() {
             padding: "7px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 12, fontWeight: 600,
             background: "rgba(0,0,0,0.08)", color: "#fff",
           }}>로그아웃</button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "12px 16px 0" }}>
+        <div style={{
+          background: "#fff", borderRadius: 14, padding: "14px 16px",
+          border: "1px solid #E5E7EB", boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#1A1A2E", marginBottom: 4 }}>공유 주소 만들기 · 복사</div>
+          <div style={{ fontSize: 11, color: "#6B7280", marginBottom: 12, lineHeight: 1.45 }}>
+            카카오톡·문자에 붙여넣기 할 주소입니다. 모두 <b>영문 경로</b>입니다. 칸을 눌러 전체 선택 후 복사해도 됩니다.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {[
+              { label: "현장 앱 (영업사원)", sub: "/f", val: fieldAppUrl || "", k: "field" },
+              { label: "본사 관리 (어드민)", sub: "/h", val: hqAppUrl || "", k: "hq" },
+              { label: "영업 안내 페이지", sub: "/sales", val: salesBridgeUrl || "", k: "sales" },
+              { label: "어드민 안내 페이지", sub: "/admin-check", val: adminBridgeUrl || "", k: "adminb" },
+              { label: "메인 안내", sub: "루트", val: hubRootUrl || "", k: "hub" },
+            ].map(row => (
+              <div key={row.k} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "stretch" }}>
+                <div style={{ flex: "0 0 132px", minWidth: 88 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>{row.label}</div>
+                  <div style={{ fontSize: 10, color: "#9CA3AF" }}>{row.sub}</div>
+                </div>
+                <input readOnly value={row.val || "(주소 없음 — firebase-config 확인)"} onFocus={e => e.target.select()}
+                  style={{
+                    flex: "1 1 200px", minWidth: 0, padding: "8px 10px", borderRadius: 10, border: "1px solid #E5E7EB",
+                    fontSize: 12, fontFamily: "ui-monospace, monospace", background: "#F9FAFB", color: row.val ? "#374151" : "#9CA3AF",
+                  }} />
+                <button type="button" onClick={() => copyShareUrl(row.val, row.k)} disabled={!row.val} style={{
+                  padding: "8px 14px", borderRadius: 10, border: "none", cursor: row.val ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 12,
+                  background: !row.val ? "#E5E7EB" : shareCopiedKey === row.k ? "#059669" : "linear-gradient(135deg, #028090, #00A896)",
+                  color: "#fff", flexShrink: 0, opacity: row.val ? 1 : 0.55,
+                }}>{shareCopiedKey === row.k ? "복사됨" : "복사"}</button>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -1225,12 +1447,12 @@ function Dashboard() {
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead><tr style={{ borderBottom: "2px solid #E5E7EB" }}>
-                  {["업체명", "업종", "거점", "담당", "입점일", "상태"].map(h => (
-                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "#6B7280", fontWeight: 600, fontSize: 11 }}>{h}</th>
+                  {["업체명", "업종", "거점", "담당", "입점일", "상태", "상세"].map(h => (
+                    <th key={h} style={{ padding: "8px 10px", textAlign: h === "상세" ? "center" : "left", color: "#6B7280", fontWeight: 600, fontSize: 11 }}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
-                  {reps.flatMap(r => r.stores.map(s => ({ ...s, rep: r.name, region: r.region }))).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map((s, i) => (
+                  {reps.flatMap(r => r.stores.map(s => ({ ...s, rep: r.name, region: r.region, repId: r.id }))).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map((s, i) => (
                     <tr key={(s.id || s.name) + "-" + i} style={{ borderBottom: "1px solid #F3F4F6" }}>
                       <td style={{ padding: "10px", fontWeight: 600, color: "#1A1A2E" }}>{s.name}</td>
                       <td style={{ padding: "10px", color: "#6B7280" }}>{s.type}</td>
@@ -1238,11 +1460,59 @@ function Dashboard() {
                       <td style={{ padding: "10px", color: "#374151" }}>{s.rep}</td>
                       <td style={{ padding: "10px", color: "#6B7280" }}>{s.date}</td>
                       <td style={{ padding: "10px" }}><Badge color={s.activated ? "teal" : "orange"}>{s.activated ? "활성화" : "미활성화"}</Badge></td>
+                      <td style={{ padding: "8px", textAlign: "center" }}>
+                        <button type="button" onClick={() => setStoreDetail({
+                          store: { id: s.id, name: s.name, type: s.type, date: s.date, activated: s.activated, note: s.note, address: s.address, storeGps: s.storeGps },
+                          repName: s.rep, repRegion: s.region, repId: s.repId,
+                        })} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #028090", background: "#fff", color: "#028090", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>보기</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <div style={{ background: "#fff", borderRadius: 16, padding: 24, boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: "#1A1A2E" }}>최근 방문 기록</h3>
+            {dashboardRecentVisits.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 36, color: "#9CA3AF", fontSize: 14 }}>방문 기록이 없습니다</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr style={{ borderBottom: "2px solid #E5E7EB" }}>
+                    {["날짜", "담당", "업체명", "결과", "비고"].map(h => (
+                      <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "#6B7280", fontWeight: 600, fontSize: 11 }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {dashboardRecentVisits.map((v, i) => {
+                      const rc = {
+                        success: { color: "teal", label: "입점 성공" },
+                        retry: { color: "orange", label: "재방문" },
+                        fail: { color: "red", label: "거절" },
+                      };
+                      const r = rc[v.result] || { color: "gray", label: v.result || "—" };
+                      const repName = (repRows.find(x => String(x.id) === String(v.repId)) || {}).name || String(v.repId || "—");
+                      return (
+                        <tr key={v.id || i} style={{ borderBottom: "1px solid #F3F4F6", verticalAlign: "middle" }}>
+                          <td style={{ padding: "10px", color: "#6B7280", whiteSpace: "nowrap" }}>{v.date || "—"}</td>
+                          <td style={{ padding: "10px", color: "#374151" }}>{repName}</td>
+                          <td style={{ padding: "10px", fontWeight: 600, color: "#1A1A2E" }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                              {v.name || "—"}
+                              {v.suspicious === true ? <Badge color="orange">이동 이상</Badge> : null}
+                            </span>
+                          </td>
+                          <td style={{ padding: "10px" }}><Badge color={r.color}>{r.label}</Badge></td>
+                          <td style={{ padding: "10px", color: "#9CA3AF", fontSize: 12 }}>{v.suspicious === true ? "직전 기록 대비 시속 120km 초과" : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </React.Fragment>)}
 
@@ -1352,8 +1622,8 @@ function Dashboard() {
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead><tr style={{ borderBottom: "2px solid #E5E7EB" }}>
-                  {["업체명", "업종", "입점일", "상태", "인센티브"].map(h => (
-                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "#6B7280", fontWeight: 600, fontSize: 11 }}>{h}</th>
+                  {["업체명", "업종", "입점일", "상태", "인센티브", "상세"].map(h => (
+                    <th key={h} style={{ padding: "8px 10px", textAlign: h === "상세" ? "center" : "left", color: "#6B7280", fontWeight: 600, fontSize: 11 }}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
@@ -1364,10 +1634,54 @@ function Dashboard() {
                       <td style={{ padding: "10px", color: "#6B7280" }}>{s.date}</td>
                       <td style={{ padding: "10px" }}><Badge color={s.activated ? "teal" : "orange"}>{s.activated ? "활성화" : "미활성화"}</Badge></td>
                       <td style={{ padding: "10px", fontWeight: 700, color: s.activated ? "#028090" : "#F59E0B" }}>{s.activated ? "30,000원" : "20,000원"}</td>
+                      <td style={{ padding: "8px", textAlign: "center" }}>
+                        <button type="button" onClick={() => setStoreDetail({
+                          store: { id: s.id, name: s.name, type: s.type, date: s.date, activated: s.activated, note: s.note, address: s.address, storeGps: s.storeGps },
+                          repName: selectedRep.name, repRegion: selectedRep.region, repId: selectedRep.id,
+                        })} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #028090", background: "#fff", color: "#028090", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>보기</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            )}
+            <h3 style={{ margin: "22px 0 14px", fontSize: 15, fontWeight: 700, color: "#1A1A2E" }}>방문 기록</h3>
+            {visitsForSelectedRep.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 32, color: "#9CA3AF", fontSize: 14, background: "#F9FAFB", borderRadius: 12, border: "1px dashed #E5E7EB" }}>
+                등록된 방문 기록이 없습니다
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr style={{ borderBottom: "2px solid #E5E7EB" }}>
+                    {["날짜", "업체명", "결과", "위치", "메모"].map(h => (
+                      <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "#6B7280", fontWeight: 600, fontSize: 11 }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {visitsForSelectedRep.map((v, i) => {
+                      const rc = {
+                        success: { color: "teal", label: "입점 성공" },
+                        retry: { color: "orange", label: "재방문" },
+                        fail: { color: "red", label: "거절" },
+                      };
+                      const r = rc[v.result] || { color: "gray", label: v.result || "-" };
+                      const note = (v.note && String(v.note).trim()) ? String(v.note) : "—";
+                      return (
+                        <tr key={v.id || i} style={{ borderBottom: "1px solid #F3F4F6", verticalAlign: "top" }}>
+                          <td style={{ padding: "10px", color: "#6B7280", whiteSpace: "nowrap" }}>{v.date || "—"}</td>
+                          <td style={{ padding: "10px", fontWeight: 600, color: "#1A1A2E" }}>{v.name || "—"}</td>
+                          <td style={{ padding: "10px" }}><Badge color={r.color}>{r.label}</Badge></td>
+                          <td style={{ padding: "10px" }}><NeoHqVisitGpsCell visit={v} /></td>
+                          <td style={{ padding: "10px", color: "#6B7280", fontSize: 12, lineHeight: 1.45, maxWidth: 220 }} title={note !== "—" ? note : undefined}>
+                            {note.length > 80 ? note.slice(0, 80) + "…" : note}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
             <div style={{ marginTop: 22 }}>
               <RepChatPanel repId={selectedRep.id} isAdmin={true} />
@@ -1401,8 +1715,8 @@ function Dashboard() {
               />
               <button type="button" onClick={copyFieldAppUrl} style={{
                 padding: "10px 20px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13,
-                background: fieldAppUrlCopied ? "#059669" : "linear-gradient(135deg, #028090, #00A896)", color: "#fff", flexShrink: 0,
-              }}>{fieldAppUrlCopied ? "복사됨" : "주소 복사"}</button>
+                background: shareCopiedKey === "field" ? "#059669" : "linear-gradient(135deg, #028090, #00A896)", color: "#fff", flexShrink: 0,
+              }}>{shareCopiedKey === "field" ? "복사됨" : "주소 복사"}</button>
             </div>
           </div>
           {joinRequests.length === 0 ? (
@@ -1433,6 +1747,48 @@ function Dashboard() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </React.Fragment>)}
+
+        {/* STORE DELETE REQUESTS (영업사원 앱에서 요청) */}
+        {view === "delreq" && (<React.Fragment>
+          <div style={{ marginBottom: 18 }}>
+            <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800, color: "#1A1A2E" }}>업체 삭제 요청</h2>
+            <p style={{ margin: 0, fontSize: 12, color: "#6B7280", lineHeight: 1.55 }}>영업사원은 직접 삭제할 수 없습니다. 요청을 확인한 뒤 삭제하거나 요청만 닫으세요.</p>
+          </div>
+          {storeDeleteRequests.length === 0 ? (
+            <div style={{ background: "#fff", borderRadius: 16, padding: 48, textAlign: "center", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", color: "#9CA3AF", fontSize: 14 }}>대기 중인 삭제 요청이 없습니다</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {storeDeleteRequests.map(req => {
+                const repName = (repRows.find(r => String(r.id) === String(req.repId)) || {}).name || req.repId;
+                return (
+                  <div key={req.id} style={{
+                    background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+                    borderLeft: "4px solid #DC2626", display: "flex", flexWrap: "wrap", gap: 14, justifyContent: "space-between", alignItems: "flex-start",
+                  }}>
+                    <div style={{ flex: "1 1 280px", minWidth: 0 }}>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: "#1A1A2E", marginBottom: 6 }}>{req.storeName || "업체"}</div>
+                      <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.65 }}>
+                        <div>담당: {repName} <span style={{ fontFamily: "ui-monospace, monospace", color: "#9CA3AF" }}>(repId {req.repId})</span></div>
+                        <div style={{ marginTop: 4 }}>주소: {req.storeAddress || "—"}</div>
+                        <div style={{ marginTop: 8, fontSize: 11, color: "#9CA3AF" }}>storeId: {req.storeId}</div>
+                        <div style={{ marginTop: 8, fontSize: 12, color: "#374151", whiteSpace: "pre-wrap", wordBreak: "break-word" }}><b>사유</b> — {req.note || "—"}</div>
+                        <div style={{ marginTop: 6, fontSize: 11, color: "#9CA3AF" }}>{req.createdAt || ""}</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+                      <button type="button" onClick={() => handleApproveStoreDeleteRequest(req)} style={{
+                        padding: "10px 18px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 13, background: "#DC2626", color: "#fff",
+                      }}>업체 삭제</button>
+                      <button type="button" onClick={() => handleRejectStoreDeleteRequest(req)} style={{
+                        padding: "10px 18px", borderRadius: 10, border: "1px solid #E5E7EB", cursor: "pointer", fontWeight: 700, fontSize: 13, background: "#F9FAFB", color: "#374151",
+                      }}>요청만 닫기</button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </React.Fragment>)}
@@ -1481,6 +1837,45 @@ function Dashboard() {
           )}
         </React.Fragment>)}
       </div>
+
+      <Modal open={!!storeDetail} onClose={() => setStoreDetail(null)} maxWidth={560} title={storeDetail ? ("입점 상세 · " + (storeDetail.store.name || "")) : ""}>
+        {storeDetail ? (
+          <React.Fragment>
+            <div style={{ fontSize: 12, color: "#6B7280", marginBottom: 16, lineHeight: 1.5 }}>
+              영업사원 앱에서 입점 등록 시 입력·저장된 내용입니다.
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", marginBottom: 4 }}>담당 영업사원</div>
+              <div style={{ fontSize: 14, color: "#1A1A2E" }}>{storeDetail.repName || "—"} <span style={{ color: "#6B7280" }}>({storeDetail.repRegion || "—"})</span></div>
+              <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 6, fontFamily: "ui-monospace, monospace" }}>repId: {String(storeDetail.repId || "—")}</div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", marginBottom: 4 }}>업종</div>
+              <div style={{ fontSize: 14, color: "#1A1A2E" }}>{storeDetail.store.type || "—"}</div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", marginBottom: 4 }}>주소</div>
+              <div style={{ fontSize: 14, color: "#1A1A2E", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{(storeDetail.store.address && String(storeDetail.store.address).trim()) ? storeDetail.store.address : "—"}</div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", marginBottom: 4 }}>영업사원 메모 (입점 시 필수 입력)</div>
+              <div style={{ fontSize: 14, color: "#1A1A2E", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 }}>{(storeDetail.store.note && String(storeDetail.store.note).trim()) ? storeDetail.store.note : "—"}</div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", marginBottom: 4 }}>입점일 · 상태</div>
+              <div style={{ fontSize: 14, color: "#1A1A2E" }}>{storeDetail.store.date || "—"} · {storeDetail.store.activated ? "활성화" : "미활성화"}</div>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", marginBottom: 4 }}>Firestore 문서 ID</div>
+              <div style={{ fontSize: 12, fontFamily: "ui-monospace, monospace", color: "#374151", wordBreak: "break-all" }}>{String(storeDetail.store.id || "—")}</div>
+            </div>
+            <NeoHqStoreGpsPanel storeGps={storeDetail.store.storeGps} />
+            <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => setStoreDetail(null)} style={{ padding: "10px 22px", borderRadius: 10, border: "none", background: "#028090", color: "#fff", fontWeight: 700, cursor: "pointer" }}>닫기</button>
+            </div>
+          </React.Fragment>
+        ) : null}
+      </Modal>
 
       {/* ADD REP MODAL */}
       <Modal open={showAddRep} onClose={() => setShowAddRep(false)} title="영업사원 추가">

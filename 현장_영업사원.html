@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
 <title>네오래빗 - 영업사원 어드민</title>
+<meta name="description" content="네오래빗 현장 영업사원 앱" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="네오래빗 · 현장 영업" />
+<meta property="og:description" content="매장 방문·일지 등 영업사원 화면입니다. 링크를 눌러 로그인하세요." />
+<meta name="twitter:card" content="summary" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -12,6 +17,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
+<script src="neo-kr-sigungu.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html {
@@ -115,6 +121,51 @@ const { useState, useEffect, useRef } = React;
 
 const STORE_TYPES = ["카페", "음식점", "미용실", "뷰티", "세탁소", "헬스장", "편의점", "기타"];
 
+function neoKrSidoShort(sido) {
+  const m = {
+    "서울특별시": "서울",
+    "부산광역시": "부산",
+    "대구광역시": "대구",
+    "인천광역시": "인천",
+    "광주광역시": "광주",
+    "대전광역시": "대전",
+    "울산광역시": "울산",
+    "세종특별자치시": "세종",
+    "경기도": "경기",
+    "강원특별자치도": "강원",
+    "충청북도": "충북",
+    "충청남도": "충남",
+    "전북특별자치도": "전북",
+    "전라남도": "전남",
+    "경상북도": "경북",
+    "경상남도": "경남",
+    "제주특별자치도": "제주",
+  };
+  return m[sido] || sido;
+}
+
+/** 예: 경기도 + 용인시 기흥구 + 상세 → "경기 용인시 기흥구 테크노밸리로 1" */
+function neoComposeStoreAddress(sido, sigungu, detail) {
+  const parts = [];
+  const sg = (sigungu || "").trim();
+  const sd = (sido || "").trim();
+  const dt = (detail || "").trim();
+  if (sd && sg) parts.push(neoKrSidoShort(sd) + " " + sg);
+  else if (sg) parts.push(sg);
+  else if (sd) parts.push(neoKrSidoShort(sd));
+  if (dt) parts.push(dt);
+  return parts.join(" ").trim();
+}
+
+function neoHasKrRegionData() {
+  try {
+    return Array.isArray(window.NEO_KR_SIDO_LIST) && window.NEO_KR_SIDO_LIST.length > 0
+      && window.NEO_KR_SIGUNGU_BY_SIDO && typeof window.NEO_KR_SIGUNGU_BY_SIDO === "object";
+  } catch (e) {
+    return false;
+  }
+}
+
 /** 휴대폰 노치·라운드 코너 대응 + 전 기종 가로폭 100% */
 const NEO_SECTION_PAD = {
   paddingTop: 20,
@@ -133,6 +184,7 @@ const NEO_AUTH_SURFACE_FIELD = "field";
 
 const NEO_FIELD_SAVED_LOGIN_ID_KEY = "neo_saved_login_id_field";
 const NEO_FIELD_AUTH_SESSION_START_KEY = "neo_auth_session_started_field";
+/** Auth는 LOCAL로 유지하고, 이 시간이 지나면 강제 로그아웃(다시 로그인 필요). */
 const NEO_AUTH_SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 
 function neoReadSavedLoginIdField(key) {
@@ -168,17 +220,17 @@ function neoFieldSignOut() {
 }
 
 /** 인증 메일·Hosting 기본 URL 등에 쓰는 스킴(http / https). 알림은 https 페이지에서만 동작합니다. */
-const NEO_PUBLIC_URL_SCHEME = "http://";
+const NEO_PUBLIC_URL_SCHEME = "https://";
 
 function neoRepExampleFieldUrl() {
   try {
     const cfg = window.__NEO_FIREBASE_CONFIG__ || {};
     const pid = cfg.projectId;
     if (typeof pid === "string" && pid && String(pid).indexOf("YOUR_") !== 0) {
-      return NEO_PUBLIC_URL_SCHEME + pid + ".web.app/현장_영업사원.html";
+      return NEO_PUBLIC_URL_SCHEME + pid + ".web.app/f";
     }
   } catch (e) { /* ignore */ }
-  return NEO_PUBLIC_URL_SCHEME + "(배포주소).web.app/현장_영업사원.html";
+  return NEO_PUBLIC_URL_SCHEME + "(배포주소).web.app/f";
 }
 
 /** 클릭 직후 동기로 권한 요청(일부 브라우저는 async 지연 시 거절). */
@@ -188,7 +240,7 @@ function requestNeoRepNotificationPermission(onGranted) {
     return;
   }
   if (!window.isSecureContext) {
-    alert("브라우저 알림은 보안 연결(https://)에서만 켤 수 있습니다.\n\n배포 주소 예: https://(프로젝트ID).web.app/현장_영업사원.html\n로컬은 http://localhost 만 알림이 허용되는 경우가 많습니다.");
+    alert("브라우저 알림은 보안 연결(https://)에서만 켤 수 있습니다.\n\n배포 주소 예: https://(프로젝트ID).web.app/f\n로컬은 http://localhost 만 알림이 허용되는 경우가 많습니다.");
     return;
   }
   const cur = Notification.permission;
@@ -309,7 +361,7 @@ function mapAuthError(e) {
   if (c === "auth/wrong-password" || c === "auth/invalid-credential") return "이메일 또는 비밀번호를 확인해 주세요.";
   if (c === "auth/too-many-requests") return "시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
   if (c === "auth/network-request-failed") return "네트워크를 확인해 주세요.";
-  if (c === "auth/unauthorized-continue-uri") return "인증 메일 링크 주소가 Firebase에 허용되지 않았습니다. 콘솔 → Authentication → 설정 → 승인된 도메인에 배포 URL을 추가하거나, firebase-config.js 에 window.__NEO_EMAIL_CONTINUE_URL__ = \"http(s)://…/현장_영업사원.html\" 을 넣으세요.";
+  if (c === "auth/unauthorized-continue-uri") return "인증 메일 링크 주소가 Firebase에 허용되지 않았습니다. 콘솔 → Authentication → 설정 → 승인된 도메인에 배포 URL을 추가하거나, firebase-config.js 에 window.__NEO_EMAIL_CONTINUE_URL__ = \"http(s)://…/f\" 를 넣으세요.";
   return (e && e.message) || String(e);
 }
 
@@ -329,7 +381,7 @@ function neoAuthActionCodeSettings() {
   }
   const pid = cfg.projectId;
   if (typeof pid === "string" && pid && String(pid).indexOf("YOUR_") !== 0) {
-    return { url: NEO_PUBLIC_URL_SCHEME + pid + ".web.app/현장_영업사원.html", handleCodeInApp: false };
+    return { url: NEO_PUBLIC_URL_SCHEME + pid + ".web.app/f", handleCodeInApp: false };
   }
   const domain = cfg.authDomain;
   if (typeof domain === "string" && domain && String(domain).indexOf("YOUR_") !== 0 && domain.indexOf(".") > 0) {
@@ -423,13 +475,23 @@ function Input({ label, value, onChange, placeholder, type, multiline }) {
   );
 }
 
-function Select({ label, value, onChange, options }) {
+function Select({ label, value, onChange, options, disabled }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>{label}</label>
-      <select value={value} onChange={e => onChange(e.target.value)} style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 16, outline: "none", background: "#FAFAFA", boxSizing: "border-box", cursor: "pointer" }}>
+      <select value={value} disabled={!!disabled} onChange={e => onChange(e.target.value)} style={{
+        width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 16, outline: "none",
+        background: disabled ? "#F3F4F6" : "#FAFAFA", boxSizing: "border-box", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.75 : 1,
+      }}>
         <option value="">선택</option>
-        {options.map(o => <option key={o} value={o}>{o}</option>)}
+        {(options || []).map((o, i) => {
+          if (o != null && typeof o === "object" && !Array.isArray(o) && ("value" in o)) {
+            const v = String(o.value);
+            return <option key={v || ("o" + i)} value={v}>{o.label != null ? String(o.label) : v}</option>;
+          }
+          const s = String(o);
+          return <option key={s} value={s}>{s}</option>;
+        })}
       </select>
     </div>
   );
@@ -600,7 +662,7 @@ function RepLoginGate() {
     let cancelled = false;
     (async () => {
       try {
-        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.SESSION);
+        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); /* 탭·브라우저를 닫아도 기기에서 로그인 유지 */
         const prev = sessionStorage.getItem(NEO_AUTH_SURFACE_KEY);
         if (prev && prev !== NEO_AUTH_SURFACE_FIELD) await firebase.auth().signOut();
         if (!cancelled) sessionStorage.setItem(NEO_AUTH_SURFACE_KEY, NEO_AUTH_SURFACE_FIELD);
@@ -969,8 +1031,8 @@ function App({ repId, onSignOut }) {
   const [showDetail, setShowDetail] = useState(null);
   const [storeFilter, setStoreFilter] = useState("all");
 
-  const [newStore, setNewStore] = useState({ name: "", type: "", address: "", note: "" });
-  const [newVisit, setNewVisit] = useState({ name: "", address: "", result: "", note: "", date: "" });
+  const [newStore, setNewStore] = useState({ name: "", type: "", address: "", note: "", addressSido: "", addressSigungu: "", addressDetail: "" });
+  const [newVisit, setNewVisit] = useState({ name: "", address: "", addressSido: "", addressSigungu: "", addressDetail: "", result: "", note: "", date: "", storeId: "" });
   const [visitFormMode, setVisitFormMode] = useState("add");
   const [editingVisitId, setEditingVisitId] = useState(null);
   const [storeSelectionMode, setStoreSelectionMode] = useState(false);
@@ -979,6 +1041,11 @@ function App({ repId, onSignOut }) {
   const [showAnnouncePopup, setShowAnnouncePopup] = useState(false);
   const [showAnnounceRead, setShowAnnounceRead] = useState(false);
   const [headerNow, setHeaderNow] = useState(() => new Date());
+  const [storeDeleteRequestTarget, setStoreDeleteRequestTarget] = useState(null);
+  const [storeDeleteReason, setStoreDeleteReason] = useState("");
+  const [storeDeleteSubmitting, setStoreDeleteSubmitting] = useState(false);
+  const [visitSaveLocating, setVisitSaveLocating] = useState(false);
+  const [storeSaveLocating, setStoreSaveLocating] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setHeaderNow(new Date()), 30000);
@@ -1085,6 +1152,7 @@ function App({ repId, onSignOut }) {
               date: x.date,
               note: x.note || "",
               status: x.activated ? "activated" : "pending",
+              storeGps: x.storeGps || null,
             };
           }));
         }, err => console.error(err));
@@ -1145,20 +1213,112 @@ function App({ repId, onSignOut }) {
 
   const filteredStores = storeFilter === "all" ? stores : stores.filter(s => s.status === storeFilter);
 
+  const neoUseRegions = neoHasKrRegionData();
+  const neoSigunguOptions = neoUseRegions && newStore.addressSido && window.NEO_KR_SIGUNGU_BY_SIDO[newStore.addressSido]
+    ? window.NEO_KR_SIGUNGU_BY_SIDO[newStore.addressSido]
+    : [];
+  const neoVisitSigunguOptions = neoUseRegions && newVisit.addressSido && window.NEO_KR_SIGUNGU_BY_SIDO[newVisit.addressSido]
+    ? window.NEO_KR_SIGUNGU_BY_SIDO[newVisit.addressSido]
+    : [];
+
+  const openAddStoreModal = () => {
+    setNewStore({ name: "", type: "", address: "", note: "", addressSido: "", addressSigungu: "", addressDetail: "" });
+    setShowAddStore(true);
+  };
+
+  const getVisitGpsPosition = () => new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(Object.assign(new Error("NO_GEOLOCATION"), { code: 0 }));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 120000,
+    });
+  });
+
+  /** 두 좌표 사이 거리(미터). WGS84 기준 Haversine. */
+  const neoHaversineMeters = (lat1, lng1, lat2, lng2) => {
+    const R = 6371000;
+    const toRad = deg => deg * Math.PI / 180;
+    const φ1 = toRad(lat1);
+    const φ2 = toRad(lat2);
+    const Δφ = toRad(lat2 - lat1);
+    const Δλ = toRad(lng2 - lng1);
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2)
+      + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+    return R * c;
+  };
+
+  /** 방문 gps.timestamp → 밀리초 (Firestore Timestamp 또는 plain object). */
+  const neoVisitGpsTimestampMs = g => {
+    if (!g || g.timestamp == null) return null;
+    const t = g.timestamp;
+    if (typeof t.toMillis === "function") return t.toMillis();
+    if (typeof t === "object" && typeof t.seconds === "number") {
+      return t.seconds * 1000 + Math.floor((t.nanoseconds || 0) / 1e6);
+    }
+    return null;
+  };
+
   const handleAddStore = async () => {
     if (!newStore.name || !newStore.type) return;
+    if (storeSaveLocating) return;
+    const useRegions = neoHasKrRegionData();
+    const noteTrim = (newStore.note || "").trim();
+    if (!noteTrim) return;
+    if (useRegions) {
+      if (!newStore.addressSido || !newStore.addressSigungu || !(newStore.addressDetail || "").trim()) return;
+    } else {
+      if (!(newStore.address || "").trim()) return;
+    }
+    const composedAddress = useRegions
+      ? neoComposeStoreAddress(newStore.addressSido, newStore.addressSigungu, newStore.addressDetail)
+      : (newStore.address || "").trim();
+    setStoreSaveLocating(true);
+    let storeGps;
+    try {
+      const position = await getVisitGpsPosition();
+      const acc = typeof position.coords.accuracy === "number" ? position.coords.accuracy : Infinity;
+      if (acc > 100) {
+        alert("GPS 신호가 약합니다. 실외에서 다시 시도해주세요");
+        return;
+      }
+      const tsMs = typeof position.timestamp === "number" ? position.timestamp : Date.now();
+      storeGps = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+        accuracy: acc,
+        timestamp: firebase.firestore.Timestamp.fromMillis(tsMs),
+      };
+    } catch (e) {
+      const code = e && typeof e.code === "number" ? e.code : null;
+      if (code === 1) {
+        alert("위치 권한이 거부되었습니다. 주소창 왼쪽 자물쇠(ⓘ) → 사이트 설정에서 위치를 「허용」으로 바꾼 뒤 다시 시도해 주세요. 카카오톡 안에서는 Chrome/Safari로 열기를 권장합니다.");
+      } else if (e && e.message === "NO_GEOLOCATION") {
+        alert("이 브라우저에서는 위치 정보를 사용할 수 없습니다.");
+      } else {
+        alert("위치를 가져오지 못했습니다. 다시 시도해주세요.");
+      }
+      return;
+    } finally {
+      setStoreSaveLocating(false);
+    }
     try {
       const db = firebase.firestore();
       await db.collection("stores").add({
         repId,
         name: newStore.name,
         type: newStore.type,
-        address: newStore.address || "",
-        note: newStore.note || "",
+        address: composedAddress,
+        note: noteTrim,
         date: new Date().toISOString().slice(0, 10),
         activated: false,
+        storeGps,
       });
-      setNewStore({ name: "", type: "", address: "", note: "" });
+      setNewStore({ name: "", type: "", address: "", note: "", addressSido: "", addressSigungu: "", addressDetail: "" });
       setShowAddStore(false);
     } catch (e) {
       alert("저장 실패: " + ((e && e.message) || e));
@@ -1174,7 +1334,7 @@ function App({ repId, onSignOut }) {
   const openAddVisitModal = () => {
     setVisitFormMode("add");
     setEditingVisitId(null);
-    setNewVisit({ name: "", address: "", result: "", note: "", date: new Date().toISOString().slice(0, 10) });
+    setNewVisit({ name: "", address: "", addressSido: "", addressSigungu: "", addressDetail: "", result: "", note: "", date: new Date().toISOString().slice(0, 10), storeId: "" });
     setShowAddVisit(true);
   };
 
@@ -1184,37 +1344,123 @@ function App({ repId, onSignOut }) {
     setNewVisit({
       name: v.name || "",
       address: v.address || "",
+      addressSido: "",
+      addressSigungu: "",
+      addressDetail: "",
       result: v.result || "",
       note: v.note || "",
       date: (v.date && String(v.date).slice(0, 10)) || new Date().toISOString().slice(0, 10),
+      storeId: v.storeId != null && String(v.storeId).trim() !== "" ? String(v.storeId) : "",
     });
     setShowAddVisit(true);
   };
 
   const handleSaveVisit = async () => {
     if (!newVisit.name || !newVisit.result) return;
+    if (visitSaveLocating) return;
+    const useVisitRegions = neoHasKrRegionData();
+    if (visitFormMode === "add" && useVisitRegions && (!newVisit.addressSido || !newVisit.addressSigungu)) return;
+    const visitAddressComposed = visitFormMode === "add" && useVisitRegions
+      ? neoComposeStoreAddress(newVisit.addressSido, newVisit.addressSigungu, newVisit.addressDetail)
+      : (newVisit.address || "").trim();
     const dateStr = visitDateOrToday();
+    setVisitSaveLocating(true);
+    let gps;
+    try {
+      const position = await getVisitGpsPosition();
+      const acc = typeof position.coords.accuracy === "number" ? position.coords.accuracy : Infinity;
+      if (acc > 100) {
+        alert("GPS 신호가 약합니다. 실외에서 다시 시도해주세요");
+        return;
+      }
+      const tsMs = typeof position.timestamp === "number" ? position.timestamp : Date.now();
+      gps = {
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+        accuracy: acc,
+        timestamp: firebase.firestore.Timestamp.fromMillis(tsMs),
+      };
+    } catch (e) {
+      const code = e && typeof e.code === "number" ? e.code : null;
+      if (code === 1) {
+        alert("위치 권한이 거부되었습니다. 주소창 왼쪽 자물쇠(ⓘ) → 사이트 설정에서 위치를 「허용」으로 바꾼 뒤 다시 시도해 주세요. 카카오톡 안에서는 Chrome/Safari로 열기를 권장합니다.");
+      } else if (e && e.message === "NO_GEOLOCATION") {
+        alert("이 브라우저에서는 위치 정보를 사용할 수 없습니다.");
+      } else {
+        alert("위치를 가져오지 못했습니다. 다시 시도해주세요.");
+      }
+      return;
+    } finally {
+      setVisitSaveLocating(false);
+    }
+    const linkedStore = (newVisit.storeId && stores.find(s => String(s.id) === String(newVisit.storeId))) || null;
+    const sg = linkedStore && linkedStore.storeGps;
+    if (sg && typeof sg.lat === "number" && typeof sg.lng === "number" && Number.isFinite(sg.lat) && Number.isFinite(sg.lng)) {
+      const dM = neoHaversineMeters(gps.lat, gps.lng, sg.lat, sg.lng);
+      if (dM > 150) {
+        alert("업체 위치와 너무 멀어서 보고할 수 없습니다 (거리: " + Math.round(dM) + "m)");
+        return;
+      }
+      gps.distanceFromStore = Math.round(dM);
+    }
+    const currentGpsMs = neoVisitGpsTimestampMs(gps);
+    let suspicious = false;
+    if (currentGpsMs != null && Number.isFinite(currentGpsMs)) {
+      const exId = visitFormMode === "edit" && editingVisitId ? String(editingVisitId) : null;
+      let priorMs = -Infinity;
+      let priorGps = null;
+      for (const v of visits) {
+        if (String(v.repId) !== String(repId)) continue;
+        if (exId && String(v.id) === exId) continue;
+        const g0 = v.gps;
+        if (!g0 || typeof g0.lat !== "number" || typeof g0.lng !== "number") continue;
+        const ms = neoVisitGpsTimestampMs(g0);
+        if (ms == null || !Number.isFinite(ms) || ms >= currentGpsMs) continue;
+        if (ms > priorMs) {
+          priorMs = ms;
+          priorGps = g0;
+        }
+      }
+      if (priorGps) {
+        const deltaMs = currentGpsMs - priorMs;
+        if (deltaMs > 1000) {
+          const distM = neoHaversineMeters(priorGps.lat, priorGps.lng, gps.lat, gps.lng);
+          const speedKmh = (distM * 3600) / deltaMs;
+          if (speedKmh > 120) suspicious = true;
+        }
+      }
+    }
     try {
       const db = firebase.firestore();
+      const sidTrim = (newVisit.storeId || "").trim();
       if (visitFormMode === "edit" && editingVisitId) {
-        await db.collection("visits").doc(String(editingVisitId)).update({
+        const upd = {
           name: newVisit.name,
-          address: newVisit.address || "",
+          address: visitAddressComposed,
           date: dateStr,
           result: newVisit.result,
           note: newVisit.note || "",
-        });
+          gps,
+          suspicious,
+        };
+        if (sidTrim) upd.storeId = sidTrim;
+        else upd.storeId = firebase.firestore.FieldValue.delete();
+        await db.collection("visits").doc(String(editingVisitId)).update(upd);
       } else {
-        await db.collection("visits").add({
+        const row = {
           repId,
           name: newVisit.name,
-          address: newVisit.address || "",
+          address: visitAddressComposed,
           date: dateStr,
           result: newVisit.result,
           note: newVisit.note || "",
-        });
+          gps,
+          suspicious,
+        };
+        if (sidTrim) row.storeId = sidTrim;
+        await db.collection("visits").add(row);
       }
-      setNewVisit({ name: "", address: "", result: "", note: "", date: "" });
+      setNewVisit({ name: "", address: "", addressSido: "", addressSigungu: "", addressDetail: "", result: "", note: "", date: "", storeId: "" });
       setEditingVisitId(null);
       setVisitFormMode("add");
       setShowAddVisit(false);
@@ -1254,27 +1500,36 @@ function App({ repId, onSignOut }) {
     }
   };
 
-  const bulkDeleteStores = async () => {
-    if (selectedStoreIds.length === 0) return;
-    if (!window.confirm("선택한 " + selectedStoreIds.length + "곳을 영구 삭제할까요? 되돌릴 수 없습니다.")) return;
-    try {
-      const db = firebase.firestore();
-      await Promise.all(selectedStoreIds.map(id => db.collection("stores").doc(id).delete()));
-      setShowDetail(d => (d && selectedStoreIds.indexOf(String(d.id)) >= 0 ? null : d));
-      setSelectedStoreIds([]);
-      setStoreSelectionMode(false);
-    } catch (e) {
-      alert("삭제 실패: " + ((e && e.message) || e));
-    }
+  const openStoreDeleteRequestModal = () => {
+    if (!showDetail) return;
+    setStoreDeleteReason("");
+    setStoreDeleteRequestTarget(showDetail);
   };
 
-  const handleDeleteStore = async id => {
-    if (!window.confirm("이 업체를 삭제할까요? 되돌릴 수 없습니다.")) return;
+  const submitStoreDeleteRequest = async () => {
+    const t = storeDeleteRequestTarget;
+    const reason = (storeDeleteReason || "").trim();
+    if (!t || !reason) return;
+    setStoreDeleteSubmitting(true);
     try {
-      await firebase.firestore().collection("stores").doc(String(id)).delete();
-      setShowDetail(d => (d && String(d.id) === String(id) ? null : d));
+      const db = firebase.firestore();
+      await db.collection("store_deletion_requests").add({
+        repId,
+        storeId: String(t.id),
+        storeName: t.name || "",
+        storeAddress: t.address || "",
+        note: reason,
+        createdAt: new Date().toISOString(),
+        status: "pending",
+      });
+      setStoreDeleteRequestTarget(null);
+      setStoreDeleteReason("");
+      setShowDetail(null);
+      alert("본사에 삭제 요청을 보냈습니다. 관리자 처리 후 목록에서 사라집니다.");
     } catch (e) {
-      alert("삭제 실패: " + ((e && e.message) || e));
+      alert("요청 실패: " + ((e && e.message) || e));
+    } finally {
+      setStoreDeleteSubmitting(false);
     }
   };
 
@@ -1456,7 +1711,7 @@ function App({ repId, onSignOut }) {
           {/* Quick Actions */}
           <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A2E", marginBottom: 10 }}>빠른 실행</div>
           <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
-            <button onClick={() => setShowAddStore(true)} style={{
+            <button onClick={openAddStoreModal} style={{
               flex: "1 1 140px", minWidth: 0, padding: "14px 12px", borderRadius: 14, border: "none", cursor: "pointer",
               background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff", fontSize: 13, fontWeight: 700,
             }}>+ 업체 입점 등록</button>
@@ -1499,7 +1754,7 @@ function App({ repId, onSignOut }) {
                 padding: "8px 12px", borderRadius: 10, border: "1px solid " + (storeSelectionMode ? "#028090" : "#E5E7EB"), cursor: "pointer", fontSize: 12, fontWeight: 700,
                 background: storeSelectionMode ? "#E6FFFA" : "#fff", color: storeSelectionMode ? "#028090" : "#374151",
               }}>{storeSelectionMode ? "선택 끄기" : "선택"}</button>
-              <button onClick={() => setShowAddStore(true)} style={{
+              <button onClick={openAddStoreModal} style={{
                 padding: "8px 14px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
                 background: "linear-gradient(135deg, #028090, #00A896)", color: "#fff",
               }}>+ 등록</button>
@@ -1520,9 +1775,6 @@ function App({ repId, onSignOut }) {
               <button type="button" disabled={selectedStoreIds.length === 0} onClick={() => bulkSetStoresActivated(false)} style={{
                 padding: "6px 12px", borderRadius: 8, border: "none", background: selectedStoreIds.length === 0 ? "#D1D5DB" : "#D97706", color: "#fff", fontSize: 11, fontWeight: 700, cursor: selectedStoreIds.length === 0 ? "not-allowed" : "pointer",
               }}>미활성화</button>
-              <button type="button" disabled={selectedStoreIds.length === 0} onClick={bulkDeleteStores} style={{
-                padding: "6px 12px", borderRadius: 8, border: "none", background: selectedStoreIds.length === 0 ? "#D1D5DB" : "#DC2626", color: "#fff", fontSize: 11, fontWeight: 700, cursor: selectedStoreIds.length === 0 ? "not-allowed" : "pointer",
-              }}>삭제</button>
             </div>
           )}
 
@@ -1632,10 +1884,11 @@ function App({ repId, onSignOut }) {
               color: showDetail.status === "activated" ? "#DC2626" : "#fff",
             }}>{showDetail.status === "activated" ? "미활성화로 변경" : "활성화 완료 처리"}</button>
 
-            <button type="button" onClick={() => handleDeleteStore(showDetail.id)} style={{
-              width: "100%", padding: "12px", borderRadius: 12, border: "1px solid #FECACA", cursor: "pointer", fontSize: 13, fontWeight: 700,
-              background: "#FEF2F2", color: "#DC2626", marginTop: 10,
-            }}>업체 삭제</button>
+            <button type="button" onClick={openStoreDeleteRequestModal} style={{
+              width: "100%", padding: "12px", borderRadius: 12, border: "1px solid #FDE68A", cursor: "pointer", fontSize: 13, fontWeight: 700,
+              background: "#FFFBEB", color: "#B45309", marginTop: 10,
+            }}>본사에 삭제 요청</button>
+            <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 8, lineHeight: 1.45 }}>업체 삭제는 관리자(본사)만 할 수 있습니다. 요청 후 본사에서 확인합니다.</div>
 
             {showDetail.status === "pending" && (
               <div style={{ marginTop: 16, background: "#F8FAFB", borderRadius: 12, padding: 14 }}>
@@ -1806,15 +2059,56 @@ function App({ repId, onSignOut }) {
       <Modal open={showAddStore} onClose={() => setShowAddStore(false)} title="업체 입점 등록">
         <Input label="업체명" value={newStore.name} onChange={v => setNewStore(p => ({ ...p, name: v }))} placeholder="카페 이름, 음식점 이름 등" />
         <Select label="업종" value={newStore.type} onChange={v => setNewStore(p => ({ ...p, type: v }))} options={STORE_TYPES} />
-        <Input label="매장 주소" value={newStore.address} onChange={v => setNewStore(p => ({ ...p, address: v }))} placeholder="매장 주소" />
-        <Input label="메모 (선택)" value={newStore.note} onChange={v => setNewStore(p => ({ ...p, note: v }))} placeholder="특이사항, 사장님 반응 등" multiline />
-        <Btn onClick={handleAddStore} disabled={!newStore.name || !newStore.type}>입점 등록하기</Btn>
+        {neoUseRegions ? (
+          <>
+            <Select label="시·도" value={newStore.addressSido} onChange={v => setNewStore(p => ({ ...p, addressSido: v, addressSigungu: "" }))} options={window.NEO_KR_SIDO_LIST} />
+            <Select label="시·군·구" value={newStore.addressSigungu} onChange={v => setNewStore(p => ({ ...p, addressSigungu: v }))} options={neoSigunguOptions} disabled={!newStore.addressSido} />
+            <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: -4, marginBottom: 12, lineHeight: 1.45 }}>
+              목록을 <b>스크롤</b>해 선택하세요. 저장 시 예: <b>경기 용인시 기흥구</b> 처럼 합쳐집니다.
+            </div>
+            <Input label="나머지 주소 (필수)" value={newStore.addressDetail} onChange={v => setNewStore(p => ({ ...p, addressDetail: v }))} placeholder="도로명, 건물번호, 층 등" />
+          </>
+        ) : (
+          <Input label="매장 주소 (필수)" value={newStore.address} onChange={v => setNewStore(p => ({ ...p, address: v }))} placeholder="매장 주소" />
+        )}
+        <Input label="메모 (필수)" value={newStore.note} onChange={v => setNewStore(p => ({ ...p, note: v }))} placeholder="특이사항, 사장님 반응 등" multiline />
+        <Btn onClick={handleAddStore} disabled={
+          storeSaveLocating
+          || !newStore.name || !newStore.type || !(newStore.note || "").trim()
+          || (neoUseRegions && (!newStore.addressSido || !newStore.addressSigungu || !(newStore.addressDetail || "").trim()))
+          || (!neoUseRegions && !(newStore.address || "").trim())
+        }>{storeSaveLocating ? "위치 확인 중…" : "입점 등록하기"}</Btn>
       </Modal>
 
       {/* Add Visit Modal */}
       <Modal open={showAddVisit} onClose={() => { setShowAddVisit(false); setEditingVisitId(null); setVisitFormMode("add"); }} title={visitFormMode === "edit" ? "방문 기록 수정" : "방문 기록"}>
         <Input label="업체명" value={newVisit.name} onChange={v => setNewVisit(p => ({ ...p, name: v }))} placeholder="방문한 매장 이름" />
-        <Input label="매장 주소" value={newVisit.address} onChange={v => setNewVisit(p => ({ ...p, address: v }))} placeholder="매장 주소" />
+        <Select
+          label="연결 업체 (선택)"
+          value={newVisit.storeId || ""}
+          onChange={v => setNewVisit(p => ({ ...p, storeId: v }))}
+          options={stores.map(s => ({
+            value: s.id,
+            label: s.name + (!(s.storeGps && typeof s.storeGps.lat === "number" && typeof s.storeGps.lng === "number") ? " · 기준 GPS 없음" : ""),
+          }))}
+        />
+        <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: -8, marginBottom: 12, lineHeight: 1.45 }}>
+          내 업체 목록에서 고르면, 입점 시 저장한 <b>기준 GPS</b>와 현재 위치 거리를 비교합니다. 기준 GPS가 없으면 거리 검증을 하지 않습니다.
+        </div>
+        {visitFormMode === "edit" ? (
+          <Input label="매장 주소" value={newVisit.address} onChange={v => setNewVisit(p => ({ ...p, address: v }))} placeholder="매장 주소" />
+        ) : neoUseRegions ? (
+          <>
+            <Select label="시·도" value={newVisit.addressSido} onChange={v => setNewVisit(p => ({ ...p, addressSido: v, addressSigungu: "" }))} options={window.NEO_KR_SIDO_LIST} />
+            <Select label="시·군·구" value={newVisit.addressSigungu} onChange={v => setNewVisit(p => ({ ...p, addressSigungu: v }))} options={neoVisitSigunguOptions} disabled={!newVisit.addressSido} />
+            <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: -4, marginBottom: 12, lineHeight: 1.45 }}>
+              목록을 <b>스크롤</b>해 선택하세요. 입점 등록과 같이 <b>경기 용인시 기흥구</b> 형식으로 합쳐집니다.
+            </div>
+            <Input label="나머지 주소 (선택)" value={newVisit.addressDetail} onChange={v => setNewVisit(p => ({ ...p, addressDetail: v }))} placeholder="도로명, 건물번호, 층 등" />
+          </>
+        ) : (
+          <Input label="매장 주소" value={newVisit.address} onChange={v => setNewVisit(p => ({ ...p, address: v }))} placeholder="매장 주소" />
+        )}
         <Input label="방문일" value={newVisit.date} onChange={v => setNewVisit(p => ({ ...p, date: v }))} type="date" />
         <div style={{ marginBottom: 14 }}>
           <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>방문 결과</label>
@@ -1829,7 +2123,29 @@ function App({ repId, onSignOut }) {
           </div>
         </div>
         <Input label="메모 (선택)" value={newVisit.note} onChange={v => setNewVisit(p => ({ ...p, note: v }))} placeholder="사장님 반응, 특이사항 등" multiline />
-        <Btn onClick={handleSaveVisit} disabled={!newVisit.name || !newVisit.result}>{visitFormMode === "edit" ? "수정 저장" : "기록 저장"}</Btn>
+        <Btn onClick={handleSaveVisit} disabled={
+          visitSaveLocating
+          || !newVisit.name || !newVisit.result
+          || (visitFormMode === "add" && neoUseRegions && (!newVisit.addressSido || !newVisit.addressSigungu))
+        }>{visitSaveLocating ? "위치 확인 중…" : (visitFormMode === "edit" ? "수정 저장" : "기록 저장")}</Btn>
+      </Modal>
+
+      <Modal open={!!storeDeleteRequestTarget} onClose={() => {
+        if (storeDeleteSubmitting) return;
+        setStoreDeleteRequestTarget(null);
+        setStoreDeleteReason("");
+      }} title="본사에 업체 삭제 요청">
+        {storeDeleteRequestTarget ? (
+          <>
+            <div style={{ fontSize: 13, color: "#374151", lineHeight: 1.55, marginBottom: 12 }}>
+              <b>{storeDeleteRequestTarget.name}</b> 항목 삭제를 관리자에게 요청합니다. 본사에서 확인한 뒤 처리됩니다.
+            </div>
+            <Input label="요청 사유 (필수)" value={storeDeleteReason} onChange={v => setStoreDeleteReason(v)} placeholder="삭제가 필요한 사유" multiline />
+            <Btn onClick={submitStoreDeleteRequest} disabled={storeDeleteSubmitting || !(storeDeleteReason || "").trim()}>
+              {storeDeleteSubmitting ? "전송 중…" : "요청 보내기"}
+            </Btn>
+          </>
+        ) : null}
       </Modal>
     </div>
   );

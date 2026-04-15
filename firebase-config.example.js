@@ -9,14 +9,17 @@
  *   승인된 도메인에 배포 URL(예: Hosting)을 등록해야 인증 링크가 동작합니다.
  *
  * (선택) 인증·비밀번호 재설정 메일의 continue URL. 비워 두면 앱이
- *   현재 주소(http/https) → projectId.web.app/해당HTML → authDomain 순으로 자동 선택합니다.
- * (기본 스킴은 HTML에 http:// 로 맞춰 두었습니다. https만 쓰려면 해당 HTML의 NEO_PUBLIC_URL_SCHEME 를 "https://" 로 바꾸세요.)
+ *   현재 주소(http/https) → https://projectId.web.app/f 또는 /h → authDomain 순으로 자동 선택합니다.
+ * (공개 URL 스킴은 HTML의 NEO_PUBLIC_URL_SCHEME 기본값이 https:// 입니다.)
  * 커스텀 도메인만 쓸 때는 여기에 http(s) 전체 URL을 넣으세요.
  */
 window.__NEO_EMAIL_CONTINUE_URL__ = "";
 
 /** (선택) 본사 관리「가입 요청」에 표시할 영업사원 앱 전체 URL. 비우면 현재 호스트 또는 projectId.web.app 기준으로 자동 생성합니다. */
 window.__NEO_FIELD_APP_URL__ = "";
+
+/** (선택) 본사 관리(어드민) 앱 URL. 비우면 …/h 로 자동. 커스텀 도메인만 쓸 때 https 전체 주소. */
+window.__NEO_HQ_APP_URL__ = "";
 
 window.__NEO_FIREBASE_CONFIG__ = {
   apiKey: "YOUR_API_KEY",

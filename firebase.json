@@ -4,7 +4,30 @@
   },
   "hosting": {
     "public": ".",
-    "ignore": ["firebase.json", "firestore.rules", "**/.*", "**/node_modules/**", "README*.md"],
+    "ignore": [
+      "firebase.json",
+      "firestore.rules",
+      "**/.*",
+      "**/node_modules/**",
+      "README*.md",
+      "firebase-config.example.js",
+      "*.cmd",
+      "*.ps1"
+    ],
+    "redirects": [
+      { "source": "/f", "destination": "/field.html", "type": 302 },
+      { "source": "/f/", "destination": "/field.html", "type": 302 },
+      { "source": "/h", "destination": "/hq.html", "type": 302 },
+      { "source": "/h/", "destination": "/hq.html", "type": 302 },
+      { "source": "/field", "destination": "/field.html", "type": 302 },
+      { "source": "/field/", "destination": "/field.html", "type": 302 },
+      { "source": "/hq", "destination": "/hq.html", "type": 302 },
+      { "source": "/hq/", "destination": "/hq.html", "type": 302 },
+      { "source": "/sales", "destination": "/neo-share-launch.html?mode=field", "type": 302 },
+      { "source": "/sales/", "destination": "/neo-share-launch.html?mode=field", "type": 302 },
+      { "source": "/admin-check", "destination": "/neo-share-launch.html?mode=hq", "type": 302 },
+      { "source": "/admin-check/", "destination": "/neo-share-launch.html?mode=hq", "type": 302 }
+    ],
     "headers": [
       {
         "source": "**",
@@ -12,7 +35,19 @@
           { "key": "X-Frame-Options", "value": "DENY" },
           { "key": "X-Content-Type-Options", "value": "nosniff" },
           { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-          { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), notifications=(self)" }
+          { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(self), notifications=(self)" }
+        ]
+      },
+      {
+        "source": "**/*.html",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+        ]
+      },
+      {
+        "source": "**/*.js",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
         ]
       }
     ]

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="format-detection" content="telephone=no" />
+  <title>네오래빗</title>
+  <style>
+    html.m-field {
+      --accent: #0d9488;
+      --accent-d: #0f766e;
+      --bg1: #ecfdf5;
+      --bg2: #f8fafc;
+      --bd: #99f6e4;
+      --shadow: rgba(13, 148, 136, 0.35);
+      --badge-bg: #ccfbf1;
+    }
+    html.m-hq {
+      --accent: #2563eb;
+      --accent-d: #1d4ed8;
+      --bg1: #dbeafe;
+      --bg2: #f8fafc;
+      --bd: #93c5fd;
+      --shadow: rgba(37, 99, 235, 0.35);
+      --badge-bg: #bfdbfe;
+    }
+    * { box-sizing: border-box; }
+    html {
+      -webkit-text-size-adjust: 100%;
+      height: 100%;
+    }
+    body {
+      margin: 0;
+      min-height: 100%;
+      min-height: 100dvh;
+      min-height: -webkit-fill-available;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Apple SD Gothic Neo", sans-serif;
+      color: #0f172a;
+      background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 38%);
+      padding: calc(16px + env(safe-area-inset-top, 0)) calc(18px + env(safe-area-inset-right, 0))
+        calc(28px + env(safe-area-inset-bottom, 0)) calc(18px + env(safe-area-inset-left, 0));
+      line-height: 1.55;
+      touch-action: manipulation;
+    }
+    .wrap { max-width: 520px; margin: 0 auto; }
+    .badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--badge-bg);
+      color: var(--accent-d);
+      font-size: clamp(0.72rem, 2.8vw, 0.8rem);
+      font-weight: 700;
+      margin-bottom: 14px;
+    }
+    h1 {
+      font-size: clamp(1.2rem, 4.5vw, 1.45rem);
+      margin: 0 0 10px;
+      color: var(--accent-d);
+      line-height: 1.3;
+    }
+    p.lead {
+      margin: 0 0 20px;
+      color: #64748b;
+      font-size: clamp(0.92rem, 3.5vw, 1rem);
+    }
+    .cta { display: flex; flex-direction: column; gap: 12px; margin-bottom: 22px; }
+    a.btn, button.btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 52px;
+      padding: 14px 18px;
+      border-radius: 14px;
+      background: var(--accent);
+      color: #fff !important;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: clamp(1rem, 3.8vw, 1.08rem);
+      border: 0;
+      width: 100%;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 2px 10px var(--shadow);
+    }
+    a.btn:active, button.btn:active { transform: scale(0.99); opacity: 0.95; }
+    button.btn-secondary {
+      background: #fff;
+      color: var(--accent-d) !important;
+      border: 2px solid var(--bd);
+      box-shadow: none;
+    }
+    .url-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+    .url-card label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #475569;
+      margin-bottom: 8px;
+    }
+    .url-line {
+      font-size: clamp(0.78rem, 2.9vw, 0.88rem);
+      word-break: break-all;
+      user-select: all;
+      -webkit-user-select: all;
+      background: #f1f5f9;
+      padding: 12px;
+      border-radius: 10px;
+      color: #0f172a;
+      line-height: 1.45;
+    }
+    .hint {
+      font-size: clamp(0.82rem, 3.1vw, 0.9rem);
+      color: #475569;
+      background: rgba(255, 255, 255, 0.85);
+      border-radius: 14px;
+      padding: 14px 16px;
+      border: 1px solid #e2e8f0;
+    }
+    .hint strong { color: #0f172a; }
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: calc(20px + env(safe-area-inset-bottom, 0));
+      transform: translateX(-50%);
+      padding: 12px 20px;
+      border-radius: 999px;
+      background: #1e293b;
+      color: #fff;
+      font-size: 0.88rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      z-index: 100;
+      max-width: calc(100vw - 32px);
+      text-align: center;
+    }
+    #toast.show { opacity: 1; }
+    @media (min-width: 600px) and (min-height: 500px) {
+      body { padding-top: 28px; }
+      .wrap { max-width: 560px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="badge" id="neo-badge"></span>
+    <h1 id="neo-h1"></h1>
+    <p class="lead" id="neo-lead"></p>
+    <div class="cta">
+      <a class="btn" id="neo-open" href="#">열기</a>
+      <button type="button" class="btn btn-secondary" id="neo-copy">주소 복사 (카톡에 붙여넣기)</button>
+    </div>
+    <div class="url-card">
+      <label>공유·검증용 주소 (영문 경로)</label>
+      <div class="url-line" id="neo-share-url" translate="no"></div>
+    </div>
+    <div class="hint" id="neo-hint"></div>
+  </div>
+  <div id="toast" role="status" aria-live="polite">복사했습니다</div>
+  <script>
+  (function () {
+    var CANON = "https://nrt25-f893d.web.app";
+    var q = (new URLSearchParams(location.search).get("mode") || "").toLowerCase();
+    var MODE = q === "hq" || q === "admin" ? "hq" : "field";
+    document.documentElement.className = "m-" + MODE;
+
+    var PATH = MODE === "hq" ? "/h" : "/f";
+    var shortPage = MODE === "hq" ? "/admin-check" : "/sales";
+    var full = CANON + PATH;
+    if (typeof location !== "undefined" && location.protocol === "https:" && /\.web\.app$|\.firebaseapp\.com$/i.test(location.hostname)) {
+      full = location.origin + PATH;
+    }
+
+    var badge = document.getElementById("neo-badge");
+    var h1 = document.getElementById("neo-h1");
+    var lead = document.getElementById("neo-lead");
+    var openEl = document.getElementById("neo-open");
+    var shareEl = document.getElementById("neo-share-url");
+    var hint = document.getElementById("neo-hint");
+    var toast = document.getElementById("toast");
+    var btn = document.getElementById("neo-copy");
+
+    if (MODE === "hq") {
+      document.title = "네오래빗 · 본사(어드민) 안내";
+      if (badge) badge.textContent = "어드민 · 모바일·태블릿";
+      if (h1) h1.textContent = "본사 관리(관리자) 앱으로 이동";
+      if (lead) lead.innerHTML = "카톡 안에서 링크가 안 열리면 <strong>아래 파란 버튼</strong>을 누르거나, 카톡 메뉴(⋮)에서 <strong>다른 앱으로 열기 → Chrome/Safari</strong>를 선택하세요.";
+      if (openEl) { openEl.textContent = "본사 앱 열기"; openEl.href = full; }
+    } else {
+      document.title = "네오래빗 · 현장(영업) 안내";
+      if (badge) badge.textContent = "영업사업용 · 모바일·태블릿";
+      if (h1) h1.textContent = "현장 영업 앱으로 이동";
+      if (lead) lead.innerHTML = "카톡 안에서 링크가 안 열리면 <strong>아래 초록 버튼</strong>을 누르거나, 카톡 메뉴(⋮)에서 <strong>다른 앱으로 열기 → Chrome/Safari</strong>를 선택하세요.";
+      if (openEl) { openEl.textContent = "현장 앱 열기"; openEl.href = full; }
+    }
+    if (shareEl) shareEl.textContent = full;
+
+    var originForHint = full.replace(/\/[fh]\/?$/i, "") || CANON.replace(/\/$/, "");
+    var shortFull = originForHint + shortPage;
+    if (hint) {
+      hint.innerHTML = "<strong>스마트폰·태블릿</strong>에 맞춘 화면입니다. 붙여넣기는 <strong>https로 시작하는 한 줄</strong>만 보내는 것이 안전합니다.<br /><br />"
+        + "이 안내 페이지를 카톡으로 보낼 때: <strong translate=\"no\">" + shortFull + "</strong>";
+    }
+
+    function showToast() {
+      if (!toast) return;
+      toast.classList.add("show");
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(function () { toast.classList.remove("show"); }, 1800);
+    }
+
+    function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).then(showToast);
+      }
+      return Promise.reject();
+    }
+
+    if (btn) {
+      btn.addEventListener("click", function () {
+        var t = shareEl ? shareEl.textContent.trim() : full;
+        copyText(t).catch(function () {
+          try {
+            var ta = document.createElement("textarea");
+            ta.value = t;
+            ta.setAttribute("readonly", "");
+            ta.style.cssText = "position:fixed;left:-9999px;top:0";
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+            showToast();
+          } catch (e) {
+            window.prompt("아래 주소를 길게 눌러 전체 선택 후 복사하세요", t);
+          }
+        });
+      });
+    }
+  })();
+  </script>
+</body>
+</html>

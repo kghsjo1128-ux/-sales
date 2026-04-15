@@ -66,7 +66,9 @@ service cloud.firestore {
 
     function validStoreWriteData() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['repId', 'name', 'type', 'address', 'note', 'date', 'activated'])
+      let keysOk = d.keys().hasOnly(['repId', 'name', 'type', 'address', 'note', 'date', 'activated'])
+        || (d.keys().hasOnly(['repId', 'name', 'type', 'address', 'note', 'date', 'activated', 'storeGps']) && validVisitGps(d.storeGps));
+      return keysOk
         && repIdWellFormed(d.repId)
         && d.name is string && d.name.size() > 0 && d.name.size() <= 200
         && d.type is string && d.type.size() > 0 && d.type.size() <= 80
@@ -76,15 +78,51 @@ service cloud.firestore {
         && (!d.keys().hasAny(['note']) || (d.note is string && d.note.size() <= 2000));
     }
 
+    function validVisitGps(g) {
+      return g is map
+        && (g.keys().hasOnly(['lat', 'lng', 'accuracy', 'timestamp'])
+            || (g.keys().hasOnly(['lat', 'lng', 'accuracy', 'timestamp', 'distanceFromStore'])
+                && g.distanceFromStore is number && g.distanceFromStore >= 0 && g.distanceFromStore <= 1000000))
+        && g.lat is number && g.lng is number && g.accuracy is number
+        && g.timestamp is timestamp;
+    }
+
     function validVisitWriteData() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['repId', 'name', 'address', 'date', 'result', 'note'])
+      let keysOk = d.keys().hasOnly(['repId', 'name', 'address', 'date', 'result', 'note'])
+        || (d.keys().hasOnly(['repId', 'name', 'address', 'date', 'result', 'note', 'gps']) && validVisitGps(d.gps))
+        || (d.keys().hasOnly(['repId', 'name', 'address', 'date', 'result', 'note', 'gps', 'storeId'])
+            && validVisitGps(d.gps)
+            && d.storeId is string && d.storeId.size() > 0 && d.storeId.size() <= 128)
+        || (d.keys().hasOnly(['repId', 'name', 'address', 'date', 'result', 'note', 'gps', 'suspicious'])
+            && validVisitGps(d.gps) && d.suspicious is bool)
+        || (d.keys().hasOnly(['repId', 'name', 'address', 'date', 'result', 'note', 'gps', 'storeId', 'suspicious'])
+            && validVisitGps(d.gps)
+            && d.storeId is string && d.storeId.size() > 0 && d.storeId.size() <= 128
+            && d.suspicious is bool);
+      return keysOk
         && repIdWellFormed(d.repId)
         && d.name is string && d.name.size() > 0 && d.name.size() <= 200
         && d.result is string && d.result.size() > 0 && d.result.size() <= 120
         && d.date is string && d.date.size() <= 32
         && (!d.keys().hasAny(['address']) || (d.address is string && d.address.size() <= 500))
         && (!d.keys().hasAny(['note']) || (d.note is string && d.note.size() <= 2000));
+    }
+
+    /** 영업사원이 본사 승인용으로 올리는 업체 삭제 요청 */
+    function validStoreDeletionRequestCreate() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['repId', 'storeId', 'storeName', 'storeAddress', 'note', 'createdAt', 'status'])
+        && repIdWellFormed(d.repId)
+        && d.repId == userRepId()
+        && d.storeId is string && d.storeId.size() > 0 && d.storeId.size() <= 128
+        && d.storeName is string && d.storeName.size() > 0 && d.storeName.size() <= 200
+        && d.storeAddress is string && d.storeAddress.size() <= 500
+        && d.note is string && d.note.size() > 0 && d.note.size() <= 2000
+        && d.createdAt is string && d.createdAt.size() > 0 && d.createdAt.size() <= 48
+        && d.status is string && d.status == 'pending'
+        && exists(/databases/$(database)/documents/stores/$(d.storeId))
+        && get(/databases/$(database)/documents/stores/$(d.storeId)).data.repId == d.repId;
     }
 
     function storeRepIdUnchanged() {
@@ -193,8 +231,13 @@ service cloud.firestore {
             || (hasRepProfile()
                 && resource.data.repId == userRepId()
                 && storeRepIdUnchanged()));
-      allow delete: if isAdmin()
-        || (hasRepProfile() && resource.data.repId == userRepId());
+      allow delete: if isAdmin();
+    }
+
+    match /store_deletion_requests/{requestId} {
+      allow read: if isAdmin() || (hasRepProfile() && resource.data.repId == userRepId());
+      allow create: if hasRepProfile() && validStoreDeletionRequestCreate();
+      allow update, delete: if isAdmin();
     }
 
     match /visits/{visitId} {
